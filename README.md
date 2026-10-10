@@ -182,6 +182,9 @@ Environment variables:
 | `CACHE_DIR` | `/app/data` | downloaded versions (`feeds/`, `feed.json`), route caches (`network_cache.json`, `osm_cache/`) |
 | `GTFS_DIR` | `/app/GTFS` | optional bundled timetable (fallback if downloading fails) |
 | `PORT` | `8000` | port inside the container |
+| `UMAMI_WEBSITE_ID` | *(empty)* | [Umami](https://umami.is) website ID; when set, the tracking script is added to every page |
+| `UMAMI_SCRIPT_URL` | `https://cloud.umami.is/script.js` | tracker script URL; point it at a self-hosted Umami (e.g. `https://umami.example.com/script.js`) |
+| `UMAMI_DOMAINS` | *(empty)* | optional comma-separated hostnames to restrict tracking to (Umami's `data-domains`) |
 
 A `docker-compose.yml` is included as well (`docker compose up --build`); it sets up the volume.
 
@@ -216,11 +219,19 @@ git push -u origin main
 6. **Advanced → Volumes:** add a *Volume Mount* (a named volume, e.g. `idsjmk-data`) with the container path **`/app/data`**.
 7. Recommended resources (**Advanced → Resources**): a memory limit of at least **1 GB** (because of version switching).
 8. Optionally set `GTFS_UPDATE_INTERVAL_HOURS` under **Environment** (default 6).
+9. Optionally enable Umami analytics under **Environment**:
+   ```
+   UMAMI_WEBSITE_ID=<website id from Umami>
+   UMAMI_SCRIPT_URL=https://umami.example.com/script.js
+   UMAMI_DOMAINS=map.example.com
+   ```
+   Only `UMAMI_WEBSITE_ID` is required; leave it out to disable analytics. Changes apply after **Redeploy** (no rebuild needed).
 
 ### Option B – Docker Compose
 
 1. **Create Service → Compose**, same repository, Compose Path `./docker-compose.yml`.
 2. Under **Domains**, choose the `idsjmk-map` service and port `8000`.
+3. Optionally set `UMAMI_WEBSITE_ID`, `UMAMI_SCRIPT_URL` and `UMAMI_DOMAINS` under **Environment**; the compose file passes them to the container.
 
 ### After deploying
 

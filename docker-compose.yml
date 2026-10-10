@@ -6,6 +6,10 @@ services:
       - PORT=8000
       - GTFS_URL=https://kordis-jmk.cz/gtfs/gtfs.zip
       - GTFS_UPDATE_INTERVAL_HOURS=6
+      # Optional Umami analytics; set these in Dokploy's Environment tab.
+      - UMAMI_WEBSITE_ID=${UMAMI_WEBSITE_ID:-}
+      - UMAMI_SCRIPT_URL=${UMAMI_SCRIPT_URL:-}
+      - UMAMI_DOMAINS=${UMAMI_DOMAINS:-}
     # Downloaded timetable versions and caches survive restarts and redeploys.
     volumes:
       - idsjmk-data:/app/data

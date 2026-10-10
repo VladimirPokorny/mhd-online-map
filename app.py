@@ -32,6 +32,19 @@ BASE_DIR = Path(__file__).resolve().parent
 app = Flask(__name__)
 
 
+@app.context_processor
+def analytics():
+    """Optional Umami analytics, enabled by setting UMAMI_WEBSITE_ID."""
+    website_id = os.environ.get("UMAMI_WEBSITE_ID", "").strip()
+    if not website_id:
+        return {"umami": None}
+    return {"umami": {
+        "website_id": website_id,
+        "script_url": os.environ.get("UMAMI_SCRIPT_URL", "").strip() or "https://cloud.umami.is/script.js",
+        "domains": os.environ.get("UMAMI_DOMAINS", "").strip(),
+    }}
+
+
 @dataclass
 class State:
     """Everything derived from one GTFS version; replaced as a whole on update."""
