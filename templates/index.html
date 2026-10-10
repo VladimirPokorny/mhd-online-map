@@ -17,7 +17,7 @@
   button, input, select { font:inherit; color:inherit; }
   #app { display:flex; height:100%; }
   #sidebar { width:340px; display:flex; flex-direction:column; border-right:1px solid var(--line); background:var(--bg); z-index:1000; }
-  #main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  #main { flex:1; display:flex; flex-direction:column; min-width:0; position:relative; }
   #map { flex:1; min-height:200px; }
   header { padding:14px 16px 10px; border-bottom:1px solid var(--line); }
   header h1 { margin:0; font-size:17px; }
@@ -90,15 +90,56 @@
   .legend b { color:var(--fg); font-variant-numeric:tabular-nums; }
   #chartWrap { position:relative; }
   #chart { display:block; width:100%; height:96px; cursor:crosshair; touch-action:none; }
+  /* Mobile-only controls (hidden on desktop) */
+  #menuBtn, #tlToggle, #drawerClose, #scrim { display:none; }
   #chart text { font-size:10px; fill:var(--muted); }
   #tip { position:absolute; pointer-events:none; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font-size:12px; box-shadow:0 2px 8px rgba(0,0,0,.08); display:none; white-space:nowrap; z-index:5; }
   #tip .row { display:flex; justify-content:space-between; gap:12px; }
   #slider { width:calc(100% - 38px); margin:0 6px 0 32px; accent-color:var(--accent); }  /* aligned with the chart's plot area */
 
+  /* ---- phones: full-screen map, sidebar as a slide-in drawer, compact timeline */
   @media (max-width: 700px) {
-    #app { flex-direction:column-reverse; }
-    #sidebar { width:100%; height:38%; border-right:none; border-top:1px solid var(--line); }
-    .total { margin-left:0; }
+    html, body { height:100%; height:100dvh; overflow:hidden; }
+    #app { display:block; height:100%; }
+    #main { height:100%; }
+    #map { min-height:0; }
+
+    #sidebar { position:fixed; top:0; bottom:0; left:0; width:min(88vw, 360px); z-index:1600;
+      transform:translateX(-102%); transition:transform .2s ease; box-shadow:0 0 24px rgba(0,0,0,.25); }
+    #app.drawer-open #sidebar { transform:none; }
+    #scrim { position:fixed; inset:0; background:rgba(0,0,0,.35); z-index:1550; }
+    #app.drawer-open #scrim { display:block; }
+    #drawerClose { display:block; position:absolute; top:8px; right:8px; border:none; background:none; font-size:22px; color:var(--muted); cursor:pointer; padding:4px 8px; }
+    header { padding-right:40px; }
+    header h1 { font-size:16px; }
+    #detail { order:-1; max-height:45%; border-top:none; border-bottom:1px solid var(--line); }
+    #list { min-height:120px; }
+
+    #menuBtn { display:flex; align-items:center; gap:6px; position:absolute; top:10px; left:10px; z-index:1000;
+      border:none; background:var(--accent); color:#fff; border-radius:8px; padding:8px 12px; font-size:14px; font-weight:600;
+      box-shadow:0 2px 8px rgba(0,0,0,.25); cursor:pointer; }
+
+    #timeline { padding:8px 10px calc(8px + env(safe-area-inset-bottom)); gap:6px; }
+    .tl-row { gap:6px 8px; }
+    #play { order:1; width:40px; height:36px; }
+    #clock { order:2; font-size:20px; min-width:0; }
+    .total { order:3; margin-left:auto; gap:4px; }
+    .total b { font-size:20px; }
+    #totalLabel { font-size:11px; max-width:90px; line-height:1.2; }
+    #tlToggle { display:block; order:4; width:36px; height:36px; border:1px solid var(--line); background:var(--bg);
+      border-radius:6px; cursor:pointer; font-size:16px; color:var(--fg); }
+    #date { order:5; }
+    #speed { order:6; }
+    #presets { order:7; width:100%; }
+    #presets button { flex:1; padding:6px 4px; }
+    #dayType { order:8; width:100%; font-size:11px; }
+    .legend { font-size:11px; gap:2px 10px; }
+    .legend .note { display:none; }
+    #chart { height:64px; }
+    #slider { width:100%; margin:4px 0 0; height:28px; }  /* full width, bigger touch target */
+    #timeline.collapsed .tl-extra { display:none; }
+
+    .leaflet-popup-content { max-width:72vw; }
   }
 </style>
 </head>
@@ -106,7 +147,9 @@
 <div id="loading">Načítám síť…</div>
 <div id="stale">Jízdní řád byl aktualizován na novou verzi. <button id="staleReload">Načíst znovu</button></div>
 <div id="app">
+  <div id="scrim"></div>
   <aside id="sidebar">
+    <button id="drawerClose" title="Zavřít" aria-label="Zavřít menu">×</button>
     <header>
       <h1>Veřejná doprava Jihomoravského kraje</h1>
       <p>{{ agency }}</p>
@@ -142,18 +185,19 @@
   </aside>
   <div id="main">
     <div id="map"></div>
+    <button id="menuBtn" aria-label="Otevřít menu">☰ Menu</button>
     <section id="timeline">
       <div class="tl-row">
-        <input type="date" id="date" aria-label="Datum">
-        <div class="seg" id="presets">
+        <input type="date" id="date" class="tl-extra" aria-label="Datum">
+        <div class="seg tl-extra" id="presets">
           <button data-preset="workday">Pracovní den</button>
           <button data-preset="saturday">Sobota</button>
           <button data-preset="sunday">Neděle</button>
           <button data-preset="holiday">Svátek</button>
         </div>
-        <span id="dayType"></span>
+        <span id="dayType" class="tl-extra"></span>
         <button id="play" title="Přehrát / pozastavit (mezerník)">▶</button>
-        <select id="speed" aria-label="Rychlost přehrávání">
+        <select id="speed" class="tl-extra" aria-label="Rychlost přehrávání">
           <option value="1">1× skutečný čas</option>
           <option value="10">10×</option>
           <option value="60" selected>60× (1 min/s)</option>
@@ -162,9 +206,10 @@
         </select>
         <span id="clock">--:--</span>
         <div class="total"><b id="total">–</b><span id="totalLabel">vozidel na mapě</span></div>
+        <button id="tlToggle" aria-label="Zobrazit graf a nastavení" title="Graf a nastavení">▴</button>
       </div>
-      <div class="legend" id="legend"></div>
-      <div id="chartWrap">
+      <div class="legend tl-extra" id="legend"></div>
+      <div id="chartWrap" class="tl-extra">
         <svg id="chart" role="img" aria-label="Vozidla v provozu během dne podle druhu dopravy"></svg>
         <div id="tip"></div>
       </div>
@@ -331,6 +376,7 @@ function stopPopup(s) {
 }
 
 function selectRoute(idx) {
+  if (isMobile()) setDrawer(false);
   selected = idx;
   selectedLayer.clearLayers();
   const r = NET.routes[idx];
@@ -358,6 +404,7 @@ function selectRoute(idx) {
   d.querySelector(".close").onclick = clearSelection;
   d.querySelectorAll("li").forEach(li => li.onclick = () => {
     const s = r.stops.map(i => NET.stops[i]).find(s => s.name === li.dataset.stop);
+    if (isMobile()) setDrawer(false);
     map.setView([s.lat, s.lon], 16);
   });
   updateRunningCounts();
@@ -463,6 +510,7 @@ function enterReachMode() {
 }
 
 function setReachOrigin(idx) {
+  if (isMobile()) setDrawer(false);
   enterReachMode();
   reach.stop = idx;
   drawLines();
@@ -631,6 +679,7 @@ function setTime(t, { fetchNow = true } = {}) {
 // ------------------------------------------------------------------ chart ---
 
 const chart = { w: 0, h: 96, top: 6, bottom: 16, left: 32, right: 6, max: 1 };
+const isMobile = () => matchMedia("(max-width: 700px)").matches;
 const xOf = t => chart.left + (t / 86400) * (chart.w - chart.left - chart.right);
 const tOf = x => ((x - chart.left) / (chart.w - chart.left - chart.right)) * 86400;
 const yOf = v => chart.h - chart.bottom - (v / chart.max) * (chart.h - chart.top - chart.bottom);
@@ -648,6 +697,7 @@ function niceMax(v) {
 function drawChart() {
   const svg = $("chart");
   chart.w = svg.clientWidth;
+  chart.h = svg.clientHeight || chart.h;
   if (!profile || !chart.w) return;
   const modes = chartModes();
   const n = profile.series[modes[0]]?.length || 0;
@@ -691,7 +741,7 @@ function drawLegend() {
   for (const v of vehicles) { const t = NET.routes[v[2]].type; counts[t] = (counts[t] || 0) + 1; }
   $("legend").innerHTML = chartModes().map(m =>
     `<span class="item"><span class="sw" style="background:${modeColor(m)}"></span>${modeLabel(m)} <b>${counts[m] || 0}</b></span>`
-  ).join("") + `<span class="item">v provozu v ${fmtTime(curTime)} · celá síť</span>`;
+  ).join("") + `<span class="item note">v provozu v ${fmtTime(curTime)} · celá síť</span>`;
 }
 
 function profileAt(t) {
@@ -805,6 +855,30 @@ document.addEventListener("keydown", e => {
 });
 
 $("staleReload").addEventListener("click", () => location.assign(reloadUrl()));
+
+// ------------------------------------------------------------ mobile UI ---
+
+function setDrawer(open) {
+  $("app").classList.toggle("drawer-open", open);
+}
+$("menuBtn").addEventListener("click", () => setDrawer(true));
+$("drawerClose").addEventListener("click", () => setDrawer(false));
+$("scrim").addEventListener("click", () => setDrawer(false));
+
+function setTimelineCollapsed(collapsed) {
+  $("timeline").classList.toggle("collapsed", collapsed);
+  $("tlToggle").textContent = collapsed ? "▴" : "▾";
+  $("tlToggle").setAttribute("aria-expanded", String(!collapsed));
+  try { localStorage.setItem("tlCollapsed", collapsed ? "1" : "0"); } catch (e) {}
+}
+$("tlToggle").addEventListener("click", () => setTimelineCollapsed(!$("timeline").classList.contains("collapsed")));
+let storedCollapsed = null;
+try { storedCollapsed = localStorage.getItem("tlCollapsed"); } catch (e) {}
+setTimelineCollapsed(storedCollapsed === null ? isMobile() : storedCollapsed === "1");
+
+// Keep Leaflet in sync when the timeline or the window changes size.
+new ResizeObserver(() => map.invalidateSize()).observe($("map"));
+if (isMobile()) map.zoomControl.setPosition("topright");
 
 fetch("/api/network").then(r => r.json()).then(async net => {
   NET = net;
