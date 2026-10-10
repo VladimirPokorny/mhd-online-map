@@ -1,0 +1,2 @@
+﻿booking_rule_id,booking_type,prior_notice_duration_min,prior_notice_duration_max,booking_url,phone_number
+citya_br_1a5880bc-a5e7-46ec-9146-168917e6304a,1,60,1728000,https://www.idsjmk.cz,511 180 180

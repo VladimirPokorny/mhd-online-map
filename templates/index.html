@@ -1,0 +1,846 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mapa sítě IDS JMK</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg:#fff; --fg:#1d2433; --muted:#6b7385; --line:#e3e6ec; --hover:#f3f5f9; --accent:#00224b;
+    --surface-1:#fcfcfb; --grid:#e6e5e0;
+    /* Chart series: one fixed colour per mode (validated categorical order). */
+    --mode-Tram:#2a78d6; --mode-Trolleybus:#eb6834; --mode-Bus:#1baf7a; --mode-Train:#eda100; --mode-Ferry:#e87ba4;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; font:14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--fg); background:var(--bg); }
+  button, input, select { font:inherit; color:inherit; }
+  #app { display:flex; height:100%; }
+  #sidebar { width:340px; display:flex; flex-direction:column; border-right:1px solid var(--line); background:var(--bg); z-index:1000; }
+  #main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  #map { flex:1; min-height:200px; }
+  header { padding:14px 16px 10px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:17px; }
+  header p { margin:2px 0 0; color:var(--muted); font-size:12px; }
+  .controls { padding:10px 16px; border-bottom:1px solid var(--line); display:flex; flex-direction:column; gap:8px; }
+  #search { width:100%; padding:7px 10px; border:1px solid var(--line); border-radius:6px; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { border:1px solid var(--line); background:var(--bg); border-radius:999px; padding:3px 10px; cursor:pointer; font-size:12px; color:var(--muted); }
+  .chip.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .opts { display:flex; flex-wrap:wrap; gap:4px 12px; font-size:12px; color:var(--muted); }
+  #list { flex:1; overflow-y:auto; }
+  .route { display:flex; gap:10px; align-items:flex-start; padding:7px 16px; cursor:pointer; border-bottom:1px solid var(--line); }
+  .route:hover { background:var(--hover); }
+  .route.sel { background:#e8eef8; }
+  .badge { min-width:44px; text-align:center; font-weight:600; font-size:12px; padding:2px 6px; border-radius:4px; flex-shrink:0; }
+  .route .name { font-size:12px; }
+  .route .meta { font-size:11px; color:var(--muted); }
+  .route .run { color:var(--fg); font-weight:600; }
+  #detail { border-top:1px solid var(--line); padding:10px 16px; max-height:40%; overflow-y:auto; display:none; }
+  #detail h2 { margin:0 0 4px; font-size:15px; display:flex; gap:8px; align-items:center; }
+  #detail .close { margin-left:auto; cursor:pointer; border:none; background:none; font-size:18px; color:var(--muted); }
+  #detail ol { margin:6px 0 0; padding-left:20px; font-size:12px; }
+  #detail li { cursor:pointer; } #detail li:hover { text-decoration:underline; }
+  .popup-lines { display:flex; flex-wrap:wrap; gap:3px; margin-top:4px; }
+  .popup-lines .badge { min-width:0; cursor:pointer; }
+  /* ---- reachability */
+  #reach { padding:10px 16px; border-bottom:1px solid var(--line); display:flex; flex-direction:column; gap:6px; }
+  #reach h3 { margin:0; font-size:13px; }
+  .reach-row { display:flex; gap:6px; }
+  #reachStop { flex:1; min-width:0; padding:5px 8px; border:1px solid var(--line); border-radius:6px; }
+  #reachMinutes { padding:4px; border:1px solid var(--line); border-radius:6px; }
+  #reachClear { border:1px solid var(--line); background:var(--bg); border-radius:6px; cursor:pointer; padding:0 8px; }
+  #reachStatus { font-size:12px; color:var(--muted); }
+  #reachLegend { display:none; }
+  #reachLegend .bar { height:12px; border-radius:2px; }
+  #reachLegend .extra { display:flex; gap:12px; margin-top:4px; font-size:11px; color:var(--muted); }
+  #reachLegend .extra span { display:inline-flex; align-items:center; gap:4px; }
+  #reachLegend .extra i { width:12px; height:12px; border-radius:2px; display:inline-block; }
+  #map.reach-on .leaflet-tile-pane { filter: grayscale(1) contrast(0.9) brightness(1.05); }
+  #reachLegend .ticks { display:flex; justify-content:space-between; font-size:10px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .reach-btn { margin-top:6px; border:1px solid var(--accent); background:var(--accent); color:#fff; border-radius:5px; padding:3px 8px; cursor:pointer; font-size:12px; }
+  .itin { margin:4px 0 0; padding-left:16px; font-size:12px; }
+  .itin li { margin:1px 0; }
+  .itin .badge { min-width:0; padding:0 5px; font-size:11px; }
+  #feedInfo { margin-top:4px; font-size:11px; color:var(--muted); }
+  #stale { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:3000; display:none; align-items:center; gap:10px;
+    background:var(--accent); color:#fff; padding:8px 14px; border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,.25); font-size:13px; }
+  #stale button { border:none; background:#fff; color:var(--accent); border-radius:5px; padding:4px 10px; cursor:pointer; font-weight:600; }
+  #loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(255,255,255,.85); z-index:2000; font-size:16px; }
+
+  /* ---- timeline panel */
+  #timeline { border-top:1px solid var(--line); background:var(--surface-1); padding:10px 16px 12px; display:flex; flex-direction:column; gap:8px; }
+  .tl-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  .seg button { border:none; background:var(--bg); padding:4px 10px; cursor:pointer; font-size:12px; border-right:1px solid var(--line); }
+  .seg button:last-child { border-right:none; }
+  .seg button.on { background:var(--accent); color:#fff; }
+  .seg button:disabled { color:#b5b9c4; cursor:default; }
+  #date { padding:3px 6px; border:1px solid var(--line); border-radius:6px; }
+  #dayType { font-size:12px; color:var(--muted); }
+  #play { width:34px; height:30px; border-radius:6px; border:1px solid var(--accent); background:var(--accent); color:#fff; cursor:pointer; font-size:14px; }
+  #speed { padding:3px 4px; border:1px solid var(--line); border-radius:6px; font-size:12px; }
+  #clock { font-size:22px; font-weight:600; font-variant-numeric:tabular-nums; min-width:100px; }
+  .total { display:flex; align-items:baseline; gap:6px; margin-left:auto; }
+  .total b { font-size:22px; font-variant-numeric:tabular-nums; }
+  .total span { font-size:12px; color:var(--muted); }
+  .legend { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:12px; color:var(--muted); }
+  .legend .item { display:inline-flex; align-items:center; gap:5px; }
+  .legend .sw { width:10px; height:10px; border-radius:2px; }
+  .legend b { color:var(--fg); font-variant-numeric:tabular-nums; }
+  #chartWrap { position:relative; }
+  #chart { display:block; width:100%; height:96px; cursor:crosshair; touch-action:none; }
+  #chart text { font-size:10px; fill:var(--muted); }
+  #tip { position:absolute; pointer-events:none; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font-size:12px; box-shadow:0 2px 8px rgba(0,0,0,.08); display:none; white-space:nowrap; z-index:5; }
+  #tip .row { display:flex; justify-content:space-between; gap:12px; }
+  #slider { width:calc(100% - 38px); margin:0 6px 0 32px; accent-color:var(--accent); }  /* aligned with the chart's plot area */
+
+  @media (max-width: 700px) {
+    #app { flex-direction:column-reverse; }
+    #sidebar { width:100%; height:38%; border-right:none; border-top:1px solid var(--line); }
+    .total { margin-left:0; }
+  }
+</style>
+</head>
+<body>
+<div id="loading">Načítám síť…</div>
+<div id="stale">Jízdní řád byl aktualizován na novou verzi. <button id="staleReload">Načíst znovu</button></div>
+<div id="app">
+  <aside id="sidebar">
+    <header>
+      <h1>Veřejná doprava Jihomoravského kraje</h1>
+      <p>{{ agency }}</p>
+      <p id="feedInfo"></p>
+    </header>
+    <div class="controls">
+      <input id="search" type="search" placeholder="Hledat číslo linky, cíl nebo zastávku…">
+      <div class="chips" id="chips"></div>
+      <div class="opts">
+        <label><input type="checkbox" id="showVehicles" checked> Vozidla</label>
+        <label><input type="checkbox" id="showLines" checked> Linky</label>
+        <label><input type="checkbox" id="showStops" checked> Zastávky (po přiblížení)</label>
+        <span id="count"></span>
+      </div>
+    </div>
+    <section id="reach">
+      <h3>Kam se dostanu ze zastávky?</h3>
+      <div class="reach-row">
+        <input id="reachStop" list="stopNames" placeholder="Vyberte zastávku, např. Hlavní nádraží" autocomplete="off">
+        <select id="reachMinutes" aria-label="Časový limit cesty">
+          <option value="15">15 min</option><option value="30">30 min</option><option value="45">45 min</option>
+          <option value="60" selected>60 min</option><option value="90">90 min</option><option value="120">120 min</option>
+        </select>
+        <button id="reachClear" title="Zrušit">×</button>
+      </div>
+      <datalist id="stopNames"></datalist>
+      <div id="reachStatus">Odjezd se řídí datem a časem na časové ose. Zastávku můžete vybrat i kliknutím na mapě.</div>
+      <div id="reachLegend"><div class="bar" id="reachBar"></div><div class="ticks" id="reachTicks"></div>
+        <div class="extra"><span><i id="swLater"></i><span id="lblLater"></span></span><span><i id="swFar"></i>dál</span></div></div>
+    </section>
+    <div id="list"></div>
+    <div id="detail"></div>
+  </aside>
+  <div id="main">
+    <div id="map"></div>
+    <section id="timeline">
+      <div class="tl-row">
+        <input type="date" id="date" aria-label="Datum">
+        <div class="seg" id="presets">
+          <button data-preset="workday">Pracovní den</button>
+          <button data-preset="saturday">Sobota</button>
+          <button data-preset="sunday">Neděle</button>
+          <button data-preset="holiday">Svátek</button>
+        </div>
+        <span id="dayType"></span>
+        <button id="play" title="Přehrát / pozastavit (mezerník)">▶</button>
+        <select id="speed" aria-label="Rychlost přehrávání">
+          <option value="1">1× skutečný čas</option>
+          <option value="10">10×</option>
+          <option value="60" selected>60× (1 min/s)</option>
+          <option value="300">300× (5 min/s)</option>
+          <option value="900">900× (15 min/s)</option>
+        </select>
+        <span id="clock">--:--</span>
+        <div class="total"><b id="total">–</b><span id="totalLabel">vozidel na mapě</span></div>
+      </div>
+      <div class="legend" id="legend"></div>
+      <div id="chartWrap">
+        <svg id="chart" role="img" aria-label="Vozidla v provozu během dne podle druhu dopravy"></svg>
+        <div id="tip"></div>
+      </div>
+      <input type="range" id="slider" min="0" max="1439" step="1" aria-label="Denní doba">
+    </section>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const TYPE_ORDER = ["Tram", "Trolleybus", "Bus", "Train", "Ferry"];
+const STOP_ZOOM = 14;
+const MODE_LABEL = { Tram: "Tramvaj", Trolleybus: "Trolejbus", Bus: "Autobus", Train: "Vlak", Ferry: "Loď" };
+const modeLabel = t => MODE_LABEL[t] || t;
+const TRACK_LABEL = { osm: "trasa z OSM", routed: "dopočítaná přes zastávky", partial: "částečně přibližná", straight: "přibližná" };
+const WEEKDAYS = ["neděle", "pondělí", "úterý", "středa", "čtvrtek", "pátek", "sobota"];
+// Czech plural: 1 linka, 2–4 linky, 5+ linek.
+const plural = (n, one, few, many) => `${n} ${n === 1 ? one : n >= 2 && n <= 4 ? few : many}`;
+const fmtDate = iso => { const [y, m, d] = iso.split("-").map(Number); return `${d}. ${m}. ${y}`; };
+const css = getComputedStyle(document.documentElement);
+const modeColor = t => css.getPropertyValue(`--mode-${t}`).trim() || "#888";
+
+const map = L.map("map", { preferCanvas: true }).setView([49.15, 16.6], 9);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19,
+  attribution: '&copy; přispěvatelé <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+}).addTo(map);
+
+const renderer = L.canvas({ padding: 0.5, tolerance: 6 });
+const linesLayer = L.layerGroup().addTo(map);
+const stopsLayer = L.layerGroup().addTo(map);
+const selectedLayer = L.layerGroup().addTo(map);
+map.createPane("heat").style.zIndex = 350;  // below lines and markers
+const heatLayer = L.layerGroup().addTo(map);
+const reachLayer = L.layerGroup().addTo(map);
+const vehiclesLayer = L.layerGroup().addTo(map);
+// Sequential blue, dark = reachable soon, light = near the time limit (interpolated).
+const REACH_COLORS = ["#0d366b", "#104281", "#184f95", "#256abf", "#2a78d6", "#5598e7"];
+const REACH_ALPHA = 0.9;
+const REACH_STOP_ZOOM = 12;  // reached-stop dots only when zoomed in
+const LATER = { color: "#8d919b", alpha: 0.45 };  // reachable, but only after the limit
+const FAR = { color: "#3f434c", alpha: 0.45 };    // not reachable within the search horizon
+let reach = { stop: null, data: null, seq: 0, timer: null, fit: false };
+
+let NET, CAL, activeTypes = new Set(), selected = null, query = "";
+let curDate = null, curTime = 8 * 3600, profile = null, vehicles = [];
+let playing = false, playTimer = null, fetchSeq = 0;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const badge = r => `<span class="badge" data-route="${r.idx}" style="background:${r.color};color:${r.text}">${esc(r.short)}</span>`;
+const lineWeight = r => r.type === "Bus" ? 2 : 3.5;
+const pad = n => String(n).padStart(2, "0");
+const fmtTime = (s, sec) => `${pad(Math.floor(s / 3600))}:${pad(Math.floor(s / 60) % 60)}${sec ? ":" + pad(s % 60) : ""}`;
+const isoDate = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parseIso = s => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+
+// -------------------------------------------------------------------- api ---
+
+let stale = false;
+
+// GET an API endpoint for the loaded timetable version; a 409 means the server
+// switched to a newer timetable, so indices in this page no longer match.
+async function api(path) {
+  const res = await fetch(`${path}${path.includes("?") ? "&" : "?"}v=${NET.version}`);
+  if (res.status === 409) { showStale(); throw new Error("stale"); }
+  if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+  return res.json();
+}
+
+function showStale() {
+  if (stale) return;
+  stale = true;
+  togglePlay(false);
+  $("stale").style.display = "flex";
+}
+
+function reloadUrl() {
+  const qs = new URLSearchParams();
+  if (curDate) qs.set("date", curDate);
+  qs.set("time", fmtTime(curTime));
+  if (reach.stop !== null) { qs.set("from", NET.stops[reach.stop].name); qs.set("minutes", $("reachMinutes").value); }
+  return `${location.pathname}?${qs}${location.hash}`;
+}
+
+function showFeedInfo() {
+  const f = NET.feed || {};
+  const fmtTs = ts => { const d = new Date(ts); return `${d.getDate()}. ${d.getMonth() + 1}. ${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const parts = [`Jízdní řád platí ${fmtDate(CAL.start)} – ${fmtDate(CAL.end)}`];
+  if (f.source === "download") {
+    if (f.published) parts.push(`zveřejněn ${fmtTs(f.published)}`);
+  } else {
+    parts.push("přibalená data");
+  }
+  if (f.checked) parts.push(`poslední kontrola aktualizace ${fmtTs(f.checked)}`);
+  $("feedInfo").textContent = parts.join(" · ");
+}
+
+// ------------------------------------------------------------ lines/stops ---
+
+function routeMatches(r) {
+  if (!activeTypes.has(r.type)) return false;
+  if (!query) return true;
+  if (r.short.toLowerCase().includes(query) || r.long.toLowerCase().includes(query)) return true;
+  return r.stops.some(i => NET.stops[i].name.toLowerCase().includes(query));
+}
+
+function visibleRoutes() {
+  return NET.routes.filter(routeMatches);
+}
+
+function drawLines() {
+  linesLayer.clearLayers();
+  const routes = visibleRoutes();
+  if ($("showLines").checked) {
+    // Draw buses first so rail and city lines stay on top.
+    const order = [...routes].sort((a, b) => (b.type === "Bus") - (a.type === "Bus"));
+    for (const r of order) {
+      const line = L.polyline(r.path, {
+        renderer, color: r.color, weight: lineWeight(r),
+        opacity: selected !== null ? 0.15 : reach.stop !== null ? 0.2 : 0.7,
+      });
+      line.on("click", e => { L.DomEvent.stopPropagation(e); selectRoute(r.idx); });
+      line.bindTooltip(`${esc(r.short)} – ${esc(r.long)}`, { sticky: true });
+      linesLayer.addLayer(line);
+    }
+  }
+  drawList(routes);
+  $("count").textContent = plural(routes.length, "linka", "linky", "linek");
+}
+
+function drawList(routes) {
+  const sorted = [...routes].sort((a, b) =>
+    TYPE_ORDER.indexOf(a.type) - TYPE_ORDER.indexOf(b.type) ||
+    a.short.localeCompare(b.short, "cs", { numeric: true }));
+  $("list").innerHTML = sorted.map(r => `
+    <div class="route${r.idx === selected ? " sel" : ""}" data-route="${r.idx}">
+      ${badge(r)}
+      <div><div class="name">${esc(r.long)}</div>
+      <div class="meta">${modeLabel(r.type)} · ${plural(r.stops.length, "zastávka", "zastávky", "zastávek")} · <span class="run" data-run="${r.idx}"></span></div></div>
+    </div>`).join("");
+  updateRunningCounts();
+}
+
+function drawStops() {
+  stopsLayer.clearLayers();
+  if (!$("showStops").checked || map.getZoom() < STOP_ZOOM) return;
+  const b = map.getBounds().pad(0.2);
+  for (const s of NET.stops) {
+    if (!b.contains([s.lat, s.lon])) continue;
+    if (!s.routes.some(i => routeMatches(NET.routes[i]))) continue;
+    L.circleMarker([s.lat, s.lon], {
+      renderer, radius: 3.5, weight: 1.5, color: "#333", fillColor: "#fff", fillOpacity: 1,
+    }).bindPopup(() => stopPopup(s)).addTo(stopsLayer);
+  }
+}
+
+function stopPopup(s) {
+  const routes = s.routes.map(i => NET.routes[i])
+    .sort((a, b) => a.short.localeCompare(b.short, "cs", { numeric: true }));
+  return `<b>${esc(s.name)}</b><br><small>Zóna ${esc(s.zone || "–")} · ${esc(s.id)}</small>
+    <div class="popup-lines">${routes.map(badge).join("")}</div>${reachInfo(s.idx)}
+    <button class="reach-btn" data-reach="${s.idx}">Kam se odsud dostanu?</button>`;
+}
+
+function selectRoute(idx) {
+  selected = idx;
+  selectedLayer.clearLayers();
+  const r = NET.routes[idx];
+  const line = L.polyline(r.path, { renderer, color: "#fff", weight: lineWeight(r) + 5, opacity: 0.9 });
+  const core = L.polyline(r.path, { renderer, color: r.color, weight: lineWeight(r) + 2 });
+  selectedLayer.addLayer(line).addLayer(core);
+  for (const i of r.stops) {
+    const s = NET.stops[i];
+    L.circleMarker([s.lat, s.lon], {
+      renderer, radius: 4, weight: 2, color: r.color, fillColor: "#fff", fillOpacity: 1,
+    }).bindPopup(() => stopPopup(s)).addTo(selectedLayer);
+  }
+  map.fitBounds(core.getBounds(), { padding: [30, 30] });
+  drawLines();
+  drawVehicles();
+
+  const names = [...new Set(r.stops.map(i => NET.stops[i].name))].sort((a, b) => a.localeCompare(b, "cs"));
+  const d = $("detail");
+  d.style.display = "block";
+  d.innerHTML = `<h2>${badge(r)} ${modeLabel(r.type)}<button class="close" title="Zavřít">×</button></h2>
+    <div>${esc(r.long)}</div>
+    <div style="font-size:11px;color:var(--muted)">${plural(r.trips, "spoj", "spoje", "spojů")} v jízdním řádu · ${plural(names.length, "zastávka", "zastávky", "zastávek")} · trasa: ${TRACK_LABEL[r.track] || r.track}</div>
+    <div style="font-size:12px;margin-top:4px">Právě jede: <b class="run" data-run="${r.idx}"></b></div>
+    <ol>${names.map(n => `<li data-stop="${esc(n)}">${esc(n)}</li>`).join("")}</ol>`;
+  d.querySelector(".close").onclick = clearSelection;
+  d.querySelectorAll("li").forEach(li => li.onclick = () => {
+    const s = r.stops.map(i => NET.stops[i]).find(s => s.name === li.dataset.stop);
+    map.setView([s.lat, s.lon], 16);
+  });
+  updateRunningCounts();
+}
+
+function clearSelection() {
+  selected = null;
+  selectedLayer.clearLayers();
+  $("detail").style.display = "none";
+  drawLines();
+  drawVehicles();
+}
+
+function buildChips() {
+  const types = [...new Set(NET.routes.map(r => r.type))]
+    .sort((a, b) => TYPE_ORDER.indexOf(a) - TYPE_ORDER.indexOf(b));
+  activeTypes = new Set(types);
+  const chips = $("chips");
+  chips.innerHTML = types.map(t => {
+    const n = NET.routes.filter(r => r.type === t).length;
+    return `<button class="chip on" data-type="${t}">${modeLabel(t)} (${n})</button>`;
+  }).join("");
+  chips.onclick = e => {
+    const c = e.target.closest(".chip"); if (!c) return;
+    const t = c.dataset.type;
+    activeTypes.has(t) ? activeTypes.delete(t) : activeTypes.add(t);
+    c.classList.toggle("on");
+    refreshFiltered();
+  };
+}
+
+function refreshFiltered() {
+  drawLines(); drawStops(); drawVehicles();
+}
+
+// --------------------------------------------------------------- vehicles ---
+
+function drawVehicles() {
+  vehiclesLayer.clearLayers();
+  let shown = 0;
+  if ($("showVehicles").checked) {
+    for (const [lat, lon, ri, headsign, stop, atStop] of vehicles) {
+      const r = NET.routes[ri];
+      if (!routeMatches(r)) continue;
+      const dim = selected !== null && selected !== ri;
+      const m = L.circleMarker([lat, lon], {
+        renderer, radius: r.type === "Bus" ? 4.5 : 5.5, weight: 1.5,
+        color: dim ? "#fff" : "#1d2433", fillColor: r.color,
+        fillOpacity: dim ? 0.25 : 1, opacity: dim ? 0.3 : 0.9,
+      });
+      const where = atStop ? "stojí v zastávce" : "další zastávka:";
+      m.bindTooltip(`<b>${esc(r.short)}</b> → ${esc(headsign)}<br><small>${where} ${esc(NET.stops[stop].name)}</small>`);
+      m.on("click", e => { L.DomEvent.stopPropagation(e); selectRoute(ri); });
+      vehiclesLayer.addLayer(m);
+      shown++;
+    }
+  }
+  const allShown = activeTypes.size === TYPE_ORDER.filter(t => NET.routes.some(r => r.type === t)).length && !query;
+  const on = $("showVehicles").checked;
+  $("total").textContent = on ? shown : "–";
+  $("totalLabel").textContent = !on ? "vozidla skryta (zaškrtněte „Vozidla“)" : allShown ? "vozidel na mapě" : "vozidel na mapě (filtrováno)";
+  updateRunningCounts();
+  drawLegend();
+}
+
+function updateRunningCounts() {
+  const running = new Map();
+  for (const v of vehicles) running.set(v[2], (running.get(v[2]) || 0) + 1);
+  document.querySelectorAll("[data-run]").forEach(el => {
+    const n = running.get(+el.dataset.run) || 0;
+    el.textContent = `v provozu: ${n}`;
+  });
+}
+
+async function loadVehicles() {
+  if (!curDate) return;
+  const seq = ++fetchSeq;
+  const data = await api(`/api/vehicles?date=${curDate}&time=${curTime}`);
+  if (seq !== fetchSeq) return;  // a newer request superseded this one
+  vehicles = data.vehicles;
+  drawVehicles();
+}
+
+// ----------------------------------------------------------- reachability ---
+
+const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const RAMP_RGB = REACH_COLORS.map(hexRgb);
+function rampRgb(f) {
+  const x = Math.max(0, Math.min(1, f)) * (RAMP_RGB.length - 1);
+  const i = Math.min(RAMP_RGB.length - 2, Math.floor(x)), t = x - i;
+  return RAMP_RGB[i].map((c, k) => Math.round(c + (RAMP_RGB[i + 1][k] - c) * t));
+}
+const rampCss = f => `rgb(${rampRgb(f).join(",")})`;
+const REACH_HINT = "Odjezd se řídí datem a časem na časové ose. Zastávku můžete vybrat i kliknutím na mapě.";
+
+function enterReachMode() {
+  // Vehicles would hide the heatmap; switch them off while it is shown.
+  if (reach.stop === null && $("showVehicles").checked) {
+    reach.hidVehicles = true;
+    $("showVehicles").checked = false;
+    drawVehicles();
+  }
+}
+
+function setReachOrigin(idx) {
+  enterReachMode();
+  reach.stop = idx;
+  drawLines();
+  reach.fit = true;
+  $("reachStop").value = NET.stops[idx].name;
+  map.closePopup();
+  scheduleReach(0);
+}
+
+function clearReach() {
+  reach.stop = null; reach.data = null; reach.seq++;
+  clearTimeout(reach.timer);
+  heatLayer.clearLayers(); reachLayer.clearLayers();
+  $("reachStop").value = "";
+  $("reachLegend").style.display = "none";
+  $("map").classList.remove("reach-on");
+  $("reachStatus").textContent = REACH_HINT;
+  if (reach.hidVehicles) { $("showVehicles").checked = true; reach.hidVehicles = false; drawVehicles(); }
+  drawLines();
+}
+
+function scheduleReach(delay = 250) {
+  if (reach.stop === null || !curDate) return;
+  clearTimeout(reach.timer);
+  reach.timer = setTimeout(loadReach, delay);
+}
+
+async function loadReach() {
+  const seq = ++reach.seq;
+  const minutes = +$("reachMinutes").value;
+  const time = curTime;
+  if (!reach.data) $("reachStatus").textContent = "Počítám…";
+  const url = `/api/reach?date=${curDate}&time=${time}&stop=${reach.stop}&minutes=${minutes}`;
+  const data = await api(url);
+  if (seq !== reach.seq) return;  // superseded by a newer request
+  data.time = time;
+  data.byStop = new Map(data.stops.map(r => [r[0], r]));
+  reach.data = data;
+  drawReach();
+}
+
+function drawReach() {
+  const data = reach.data;
+  heatLayer.clearLayers(); reachLayer.clearLayers();
+  if (!data) return;
+  $("map").classList.add("reach-on");
+  const budget = data.budget;
+  if (data.grid) {
+    const g = data.grid, raw = atob(g.data);
+    const canvas = document.createElement("canvas");
+    canvas.width = g.w; canvas.height = g.h;
+    const ctx = canvas.getContext("2d"), img = ctx.createImageData(g.w, g.h);
+    // Lookup table minute -> RGBA, so the per-pixel loop stays cheap.
+    const lut = [];
+    for (let m = 0; m < 256; m++) {
+      if (m === 255) lut.push([...hexRgb(FAR.color), FAR.alpha * 255]);
+      else if (m <= budget) lut.push([...rampRgb(m / budget), REACH_ALPHA * 255]);
+      else lut.push([...hexRgb(LATER.color), LATER.alpha * 255]);
+    }
+    for (let i = 0; i < raw.length; i++) img.data.set(lut[raw.charCodeAt(i)], i * 4);
+    ctx.putImageData(img, 0, 0);
+    const P = L.Projection.SphericalMercator;
+    const bounds = L.latLngBounds(
+      P.unproject(L.point(g.x0, g.y1 - g.h * g.cell)),
+      P.unproject(L.point(g.x0 + g.w * g.cell, g.y1)));
+    L.imageOverlay(canvas.toDataURL(), bounds, { pane: "heat", opacity: 1, interactive: false }).addTo(heatLayer);
+  }
+  const origin = new Set(data.origin);
+  const within = data.stops.filter(r => r[1] <= budget);
+  if (reach.fit && within.length) {
+    map.fitBounds(L.latLngBounds(within.map(r => [NET.stops[r[0]].lat, NET.stops[r[0]].lon])), { padding: [30, 30] });
+    reach.fit = false;
+  }
+  for (const [si, min] of within) {
+    const s = NET.stops[si];
+    const isOrigin = origin.has(si);
+    if (!isOrigin && map.getZoom() < REACH_STOP_ZOOM) continue;
+    L.circleMarker([s.lat, s.lon], {
+      renderer, radius: isOrigin ? 7 : 2.5, weight: isOrigin ? 3 : 0.5,
+      color: isOrigin ? "#e34948" : "#fff", fillColor: isOrigin ? "#fff" : rampCss(min / budget), fillOpacity: 1,
+    }).bindTooltip(() => `<b>${esc(s.name)}</b> · ${Math.round(min)} min`)
+      .bindPopup(() => stopPopup(s)).addTo(reachLayer);
+  }
+  // Legend: continuous gradient up to the budget, then the two grey classes.
+  $("reachBar").style.background = `linear-gradient(to right, ${REACH_COLORS.join(", ")})`;
+  $("reachBar").style.opacity = REACH_ALPHA;
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => Math.round(f * budget));
+  $("reachTicks").innerHTML = ticks.map((v, i) => `<span>${v}${i === ticks.length - 1 ? " min" : ""}</span>`).join("");
+  $("swLater").style.background = LATER.color; $("swLater").style.opacity = LATER.alpha + 0.2;
+  $("swFar").style.background = FAR.color; $("swFar").style.opacity = FAR.alpha + 0.2;
+  $("lblLater").textContent = `${budget}–${data.horizon} min`;
+  $("reachLegend").style.display = "block";
+  const names = new Set(within.map(r => NET.stops[r[0]].name)).size;
+  $("reachStatus").innerHTML = `Ze zastávky <b>${esc(NET.stops[reach.stop].name)}</b>, odjezd ${fmtTime(data.time)} (${esc(dayType(curDate).label)}, ${fmtDate(curDate)}): do ${budget} min se dostanete na <b>${plural(names, "zastávku", "zastávky", "zastávek")}</b>. Barva = nejrychlejší jízda + chůze do každého místa.`;
+}
+
+function reachInfo(si) {
+  const data = reach.data;
+  const row = data && data.byStop.get(si);
+  if (!row) return "";
+  if (data.origin.includes(si)) return `<div style="margin-top:4px;font-size:12px">Začátek cesty</div>`;
+  // Follow the predecessor chain back to the origin, merging consecutive walks.
+  const legs = [];
+  let cur = row;
+  while (cur && cur[2] >= 0) {
+    const [s, min, prev, route, depRel] = cur;
+    legs.unshift({ from: prev, to: s, route, dep: data.time + depRel, arr: data.time + min * 60 });
+    cur = data.byStop.get(prev);
+  }
+  const items = [];
+  for (const l of legs) {
+    const last = items[items.length - 1];
+    if (l.route < 0 && last && last.route < 0) { last.to = l.to; last.arr = l.arr; continue; }
+    items.push({ ...l });
+  }
+  const html = items.map(l => l.route < 0
+    ? `<li>Pěšky ${Math.max(1, Math.round((l.arr - l.dep) / 60))} min do zastávky ${esc(NET.stops[l.to].name)}</li>`
+    : `<li>${badge(NET.routes[l.route])} ${fmtTime(l.dep)} ${esc(NET.stops[l.from].name)} → ${fmtTime(Math.round(l.arr))} ${esc(NET.stops[l.to].name)}</li>`).join("");
+  return `<div style="margin-top:4px;font-size:12px"><b>${Math.round(row[1])} min</b> ze zastávky ${esc(NET.stops[reach.stop].name)}</div><ol class="itin">${html}</ol>`;
+}
+
+// --------------------------------------------------------------- calendar ---
+
+function dayType(iso) {
+  if (CAL.holidays[iso]) return { kind: "holiday", label: `státní svátek – ${CAL.holidays[iso]}` };
+  const wd = parseIso(iso).getDay();
+  if (wd === 6) return { kind: "saturday", label: "sobota" };
+  if (wd === 0) return { kind: "sunday", label: "neděle" };
+  return { kind: "workday", label: `${WEEKDAYS[wd]} (pracovní den)` };
+}
+
+function findDate(kind) {
+  const start = parseIso(CAL.start), end = parseIso(CAL.end);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const from = today > start && today <= end ? today : start;
+  // Prefer the next matching day from `from`, otherwise the first from the start of validity.
+  for (const origin of [from, start]) {
+    for (let d = new Date(origin); d <= end; d.setDate(d.getDate() + 1)) {
+      if (dayType(isoDate(d)).kind === kind) return isoDate(d);
+    }
+  }
+  return null;
+}
+
+async function setDate(iso) {
+  curDate = iso;
+  $("date").value = iso;
+  const t = dayType(iso);
+  $("dayType").textContent = t.label[0].toUpperCase() + t.label.slice(1);
+  document.querySelectorAll("#presets button").forEach(b => b.classList.toggle("on", b.dataset.preset === t.kind));
+  const [prof] = await Promise.all([api(`/api/profile?date=${iso}`), loadVehicles()]);
+  profile = prof;
+  drawChart();
+  scheduleReach(0);
+}
+
+function setTime(t, { fetchNow = true } = {}) {
+  curTime = Math.max(0, Math.min(86399, Math.round(t)));
+  $("slider").value = Math.floor(curTime / 60);
+  $("clock").textContent = fmtTime(curTime, playing && +$("speed").value < 60);
+  drawCursor();
+  if (fetchNow) loadVehicles();
+  scheduleReach(playing ? 0 : 250);
+}
+
+// ------------------------------------------------------------------ chart ---
+
+const chart = { w: 0, h: 96, top: 6, bottom: 16, left: 32, right: 6, max: 1 };
+const xOf = t => chart.left + (t / 86400) * (chart.w - chart.left - chart.right);
+const tOf = x => ((x - chart.left) / (chart.w - chart.left - chart.right)) * 86400;
+const yOf = v => chart.h - chart.bottom - (v / chart.max) * (chart.h - chart.top - chart.bottom);
+
+function chartModes() {
+  return TYPE_ORDER.filter(m => profile && profile.series[m] && profile.series[m].some(v => v > 0));
+}
+
+function niceMax(v) {
+  const step = Math.pow(10, Math.floor(Math.log10(Math.max(v, 1))));
+  for (const k of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (k * step >= v) return k * step;
+  return 10 * step;
+}
+
+function drawChart() {
+  const svg = $("chart");
+  chart.w = svg.clientWidth;
+  if (!profile || !chart.w) return;
+  const modes = chartModes();
+  const n = profile.series[modes[0]]?.length || 0;
+  const totals = Array.from({ length: n }, (_, i) => modes.reduce((s, m) => s + profile.series[m][i], 0));
+  chart.max = niceMax(Math.max(...totals, 1));
+  const step = profile.step;
+  let html = "";
+  // Recessive grid: baseline, midline, top + hour labels every 3 h.
+  for (const v of [0, chart.max / 2, chart.max]) {
+    html += `<line x1="${chart.left}" x2="${chart.w - chart.right}" y1="${yOf(v)}" y2="${yOf(v)}" stroke="var(--grid)" stroke-width="1"/>`;
+    html += `<text x="${chart.left - 4}" y="${yOf(v) + 3}" text-anchor="end">${v}</text>`;
+  }
+  for (let h = 0; h <= 24; h += 3) {
+    html += `<text x="${xOf(h * 3600)}" y="${chart.h - 3}" text-anchor="middle">${pad(h % 24)}:00</text>`;
+  }
+  // Stacked areas, fixed mode order; a thin surface stroke separates the bands.
+  const acc = new Array(n).fill(0);
+  for (const m of modes) {
+    const lower = acc.slice();
+    profile.series[m].forEach((v, i) => acc[i] += v);
+    let d = "";
+    for (let i = 0; i < n; i++) d += `${i ? "L" : "M"}${xOf(i * step).toFixed(1)},${yOf(acc[i]).toFixed(1)}`;
+    for (let i = n - 1; i >= 0; i--) d += `L${xOf(i * step).toFixed(1)},${yOf(lower[i]).toFixed(1)}`;
+    html += `<path d="${d}Z" fill="${modeColor(m)}" stroke="var(--surface-1)" stroke-width="1" stroke-linejoin="round"/>`;
+  }
+  html += `<line id="cursor" y1="${chart.top - 4}" y2="${chart.h - chart.bottom}" stroke="var(--fg)" stroke-width="2"/>`;
+  html += `<line id="hoverLine" y1="${chart.top}" y2="${chart.h - chart.bottom}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" style="display:none"/>`;
+  svg.innerHTML = html;
+  drawCursor();
+  drawLegend();
+}
+
+function drawCursor() {
+  const c = $("cursor");
+  if (c) { const x = xOf(curTime); c.setAttribute("x1", x); c.setAttribute("x2", x); }
+}
+
+function drawLegend() {
+  if (!profile) return;
+  const counts = {};
+  for (const v of vehicles) { const t = NET.routes[v[2]].type; counts[t] = (counts[t] || 0) + 1; }
+  $("legend").innerHTML = chartModes().map(m =>
+    `<span class="item"><span class="sw" style="background:${modeColor(m)}"></span>${modeLabel(m)} <b>${counts[m] || 0}</b></span>`
+  ).join("") + `<span class="item">v provozu v ${fmtTime(curTime)} · celá síť</span>`;
+}
+
+function profileAt(t) {
+  const i = Math.round(t / profile.step);
+  return chartModes().map(m => [m, profile.series[m][i] || 0]);
+}
+
+function chartEvents() {
+  const svg = $("chart"), tip = $("tip");
+  let dragging = false;
+  const timeFromEvent = e => {
+    const r = svg.getBoundingClientRect();
+    return Math.max(0, Math.min(86399, tOf(e.clientX - r.left)));
+  };
+  svg.addEventListener("pointerdown", e => {
+    dragging = true; svg.setPointerCapture(e.pointerId);
+    setTime(Math.round(timeFromEvent(e) / 60) * 60);
+  });
+  svg.addEventListener("pointerup", () => dragging = false);
+  svg.addEventListener("pointermove", e => {
+    if (!profile) return;
+    const t = timeFromEvent(e);
+    if (dragging) setTime(Math.round(t / 60) * 60);
+    const hl = $("hoverLine"), x = xOf(t);
+    hl.setAttribute("x1", x); hl.setAttribute("x2", x); hl.style.display = "";
+    const rows = profileAt(t);
+    const total = rows.reduce((s, [, v]) => s + v, 0);
+    tip.innerHTML = `<b>${fmtTime(Math.round(t / profile.step) * profile.step)}</b>` +
+      rows.slice().reverse().map(([m, v]) =>
+        `<div class="row"><span><span class="sw" style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${modeColor(m)}"></span> ${modeLabel(m)}</span><b>${v}</b></div>`).join("") +
+      `<div class="row" style="border-top:1px solid var(--line);margin-top:2px"><span>Celkem</span><b>${total}</b></div>`;
+    tip.style.display = "block";
+    const wrap = $("chartWrap").getBoundingClientRect();
+    const left = e.clientX - wrap.left;
+    tip.style.left = `${left + 12 + tip.offsetWidth > wrap.width ? left - tip.offsetWidth - 12 : left + 12}px`;
+    tip.style.top = "0px";
+  });
+  svg.addEventListener("pointerleave", () => {
+    tip.style.display = "none";
+    const hl = $("hoverLine"); if (hl) hl.style.display = "none";
+  });
+  new ResizeObserver(drawChart).observe(svg);
+}
+
+// --------------------------------------------------------------- playback ---
+
+function togglePlay(on = !playing) {
+  playing = on;
+  $("play").textContent = playing ? "❚❚" : "▶";
+  clearTimeout(playTimer);
+  if (playing) tick();
+}
+
+async function tick() {
+  if (!playing) return;
+  const started = performance.now();
+  const speed = +$("speed").value;
+  const interval = speed <= 10 ? 1000 : 500;
+  let t = curTime + speed * interval / 1000;
+  if (t >= 86400) t -= 86400;
+  setTime(t, { fetchNow: false });
+  await loadVehicles();
+  playTimer = setTimeout(tick, Math.max(0, interval - (performance.now() - started)));
+}
+
+// ------------------------------------------------------------------ wiring ---
+
+document.addEventListener("click", e => {
+  const rb = e.target.closest("[data-reach]");
+  if (rb) { setReachOrigin(+rb.dataset.reach); return; }
+  const el = e.target.closest("[data-route]");
+  if (el && !e.target.closest(".chip")) selectRoute(+el.dataset.route);
+});
+let searchTimer;
+$("search").addEventListener("input", e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { query = e.target.value.trim().toLowerCase(); refreshFiltered(); }, 200);
+});
+$("showStops").addEventListener("change", drawStops);
+$("showLines").addEventListener("change", drawLines);
+$("showVehicles").addEventListener("change", drawVehicles);
+map.on("moveend", drawStops);
+let lastZoom = null;
+map.on("zoomend", () => {
+  const z = map.getZoom() >= REACH_STOP_ZOOM;
+  if (reach.data && z !== lastZoom) drawReach();
+  lastZoom = z;
+});
+map.on("click", () => selected !== null && clearSelection());
+
+const stopByName = new Map();
+$("reachStop").addEventListener("change", e => {
+  const idx = stopByName.get(e.target.value.trim());
+  if (idx !== undefined) setReachOrigin(idx);
+});
+$("reachMinutes").addEventListener("change", () => scheduleReach(0));
+$("reachClear").addEventListener("click", clearReach);
+$("slider").addEventListener("input", e => setTime(+e.target.value * 60));
+$("date").addEventListener("change", e => { if (e.target.value) setDate(e.target.value); });
+$("presets").addEventListener("click", e => {
+  const b = e.target.closest("button[data-preset]");
+  const d = b && findDate(b.dataset.preset);
+  if (d) setDate(d);
+});
+$("play").addEventListener("click", () => togglePlay());
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input, select, textarea")) return;
+  if (e.code === "Space") { e.preventDefault(); togglePlay(); }
+  if (e.code === "ArrowRight") setTime(curTime + (e.shiftKey ? 600 : 60));
+  if (e.code === "ArrowLeft") setTime(curTime - (e.shiftKey ? 600 : 60));
+});
+
+$("staleReload").addEventListener("click", () => location.assign(reloadUrl()));
+
+fetch("/api/network").then(r => r.json()).then(async net => {
+  NET = net;
+  CAL = await api("/api/calendar");
+  showFeedInfo();
+  NET.routes.forEach((r, i) => { r.idx = i; r.path = r.ways.map(w => NET.ways[w]); });
+  NET.stops.forEach((s, i) => { s.idx = i; if (!stopByName.has(s.name)) stopByName.set(s.name, i); });
+  $("stopNames").innerHTML = [...stopByName.keys()].sort((a, b) => a.localeCompare(b, "cs"))
+    .map(n => `<option value="${esc(n)}">`).join("");
+  $("date").min = CAL.start; $("date").max = CAL.end;
+  $("presets").querySelectorAll("button").forEach(b => b.disabled = !findDate(b.dataset.preset));
+  buildChips();
+  drawLines();
+  drawStops();
+  chartEvents();
+  // Optional start view from the URL: #zoom/lat/lon (kept up to date while panning).
+  const view = location.hash.slice(1).split("/").map(Number);
+  if (view.length === 3 && view.every(Number.isFinite)) map.setView([view[1], view[2]], view[0]);
+  else map.fitBounds(L.latLngBounds(NET.stops.map(s => [s.lat, s.lon])));
+  map.on("moveend", () => {
+    const c = map.getCenter();
+    history.replaceState(null, "", `#${map.getZoom()}/${c.lat.toFixed(4)}/${c.lng.toFixed(4)}`);
+  });
+  const now = new Date();
+  const today = isoDate(now);
+  const inRange = d => d >= CAL.start && d <= CAL.end;
+  // Optional query parameters: ?date=YYYY-MM-DD&time=HH:MM&from=<stop name>&minutes=60
+  const qs = new URLSearchParams(location.search);
+  const qTime = /^(\d{1,2}):(\d{2})$/.exec(qs.get("time") || "");
+  if (["15", "30", "45", "60", "90", "120"].includes(qs.get("minutes"))) $("reachMinutes").value = qs.get("minutes");
+  if (stopByName.has(qs.get("from"))) { enterReachMode(); reach.stop = stopByName.get(qs.get("from")); reach.fit = true; $("reachStop").value = qs.get("from"); }
+  setTime(qTime ? qTime[1] * 3600 + qTime[2] * 60
+    : inRange(today) ? now.getHours() * 3600 + now.getMinutes() * 60 : 8 * 3600, { fetchNow: false });
+  await setDate(inRange(qs.get("date") || "") ? qs.get("date") : inRange(today) ? today : findDate("workday"));
+  $("loading").remove();
+});
+</script>
+</body>
+</html>

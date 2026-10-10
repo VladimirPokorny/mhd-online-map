@@ -1,0 +1,17 @@
+services:
+  idsjmk-map:
+    build: .
+    restart: unless-stopped
+    environment:
+      - PORT=8000
+      - GTFS_URL=https://kordis-jmk.cz/gtfs/gtfs.zip
+      - GTFS_UPDATE_INTERVAL_HOURS=6
+    # Downloaded timetable versions and caches survive restarts and redeploys.
+    volumes:
+      - idsjmk-data:/app/data
+    # Dokploy routes the domain to this port through its Traefik proxy.
+    expose:
+      - "8000"
+
+volumes:
+  idsjmk-data:

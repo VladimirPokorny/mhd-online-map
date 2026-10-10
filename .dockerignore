@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.git/
+.vscode/
+.idea/
+# Rebuilt inside the image from GTFS + osm_cache
+network_cache.json
+GTFS/*.log
+*.png
+
+GTFS/*
+feeds/
+feed.json

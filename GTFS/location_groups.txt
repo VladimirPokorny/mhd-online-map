@@ -1,0 +1,2 @@
+﻿location_group_id,location_group_name
+citya_lg_1a5880bc-a5e7-46ec-9146-168917e6304a,Šlapanice
