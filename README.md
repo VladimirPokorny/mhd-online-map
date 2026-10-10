@@ -1,153 +1,155 @@
-# Mapa veřejné dopravy IDS JMK
+# IDS JMK Public Transport Map
 
-Webová aplikace, která nad mapou OpenStreetMap zobrazuje síť Integrovaného dopravního systému Jihomoravského kraje. Data bere z jízdního řádu ve formátu GTFS, který zveřejňuje KORDIS JMK ([data.brno.cz](https://data.brno.cz/datasets/379d2e9a7907460c8ca7fda1f3e84328/about)). Nové verze si aplikace stahuje sama.
+A web app that shows the network of the South Moravian Region's integrated public transport system (IDS JMK) on an OpenStreetMap map. It uses the GTFS timetable published by KORDIS JMK ([data.brno.cz](https://data.brno.cz/datasets/379d2e9a7907460c8ca7fda1f3e84328/about)) and downloads new versions automatically.
 
-- **Linky** jsou vykreslené po skutečné trase (koleje, silnice), ne rovnými čarami mezi zastávkami.
-- **Vozidla** se ukazují v libovolném čase zvoleného dne: pracovní den, sobota, neděle i svátek.
-- **Graf** ukazuje počet vozidel v provozu během celého dne podle druhu dopravy.
-- **Mapa dostupnosti** ukáže, kam se z vybrané zastávky dostanete za 15–120 minut.
+- **Lines** are drawn along their real routes (rails, roads), not as straight lines between stops.
+- **Vehicles** are shown at any time of the chosen day: workday, Saturday, Sunday or public holiday.
+- **A chart** shows how many vehicles are in service throughout the day, by mode of transport.
+- **A reachability map** shows where you can get from a chosen stop within 15–120 minutes.
 
----
-
-## 1. Návod k ovládání
-
-### Levý panel – linky a filtry
-
-| Prvek | Co dělá |
-|---|---|
-| **Hledat číslo linky, cíl nebo zastávku** | Filtruje linky, třeba `1`, `S2`, `Blansko` nebo `Mendlovo náměstí`. Filtr platí pro mapu, seznam i vozidla. |
-| **Tramvaj / Trolejbus / Autobus / Vlak / Loď** | Zapíná a vypíná jednotlivé druhy dopravy. |
-| **Vozidla / Linky / Zastávky** | Zobrazí nebo skryje vrstvu na mapě. Zastávky se ukážou až po přiblížení. |
-| **Seznam linek** | Kliknutím linku vyberete. Mapa se na ni přiblíží, ostatní linky ztlumí a dole se objeví detail: počet spojů, zastávky a počet právě jedoucích vozidel. Kliknutím na název zastávky v detailu se na ni mapa přesune. |
-
-Linku vyberete i kliknutím na mapě, na trasu nebo na vozidlo. Výběr zrušíte kliknutím do prázdného místa mapy nebo křížkem v detailu.
-
-### Časová osa (pod mapou)
-
-1. **Datum:** vyberte konkrétní den v platnosti jízdního řádu, nebo klikněte na **Pracovní den / Sobota / Neděle / Svátek**. Aplikace pak vybere nejbližší takový den. Vedle se ukáže, o jaký den jde, u svátku i jeho název (svátky jedou podle nedělního jízdního řádu).
-2. **Čas:** posuňte jezdec, nebo klikněte či táhněte přímo v grafu.
-   - Klávesy **← / →** posunou čas o 1 minutu, se **Shiftem** o 10 minut.
-3. **Přehrávání:** tlačítko **▶** (nebo mezerník) spustí animaci dne. Rychlost nastavíte vedle (1× až 900×).
-4. **Graf:** skládaný graf počtu vozidel v provozu během dne podle druhu dopravy. Po najetí myší ukáže přesné počty, svislá čára značí zvolený čas.
-5. **Počty nad grafem:** kolik vozidel kterého druhu je v provozu v daném okamžiku v celé síti. Velké číslo vpravo je počet vozidel na mapě (po případném filtrování).
-
-**Vozidla na mapě** jsou tečky v barvě linky. Po najetí myší uvidíte linku, cíl a další zastávku. Kliknutím vyberete linku.
-
-### Kam se dostanu ze zastávky? (mapa dostupnosti)
-
-1. Do pole **„Kam se dostanu ze zastávky?“** napište zastávku, třeba `Hlavní nádraží`. Druhá možnost: klikněte na zastávku na mapě a zvolte **„Kam se odsud dostanu?“**.
-2. Vyberte časový limit (15–120 min).
-3. Odjezd se řídí **datem a časem na časové ose**. Když čas změníte nebo spustíte přehrávání, mapa se přepočítá.
-
-Jak číst mapu:
-
-| Barva | Význam |
-|---|---|
-| **Modrý přechod** (tmavá → světlejší) | Kam se dostanete do zvoleného limitu. Čím tmavší, tím dřív tam budete. |
-| **Světle šedá** | Dosažitelné, ale až po limitu (do dvojnásobku limitu, nejvýš 4 hodiny). |
-| **Tmavě šedá** | Dál, než se v tomto čase dostanete. |
-
-- Barva každého místa je **nejrychlejší kombinace jízdy a chůze** (z poslední zastávky se počítá chůze).
-- Po přiblížení se ukážou dosažitelné zastávky. Po najetí myší uvidíte čas cesty, po kliknutí **celé spojení**, například *„S2 8:29 Hlavní nádraží → 8:59 Blansko město“*.
-- Ze zastávky ve výsledku můžete spustit nový výpočet.
-- Mapa dostupnosti vypne vrstvu vozidel, aby nepřekážela. Zapnete ji zaškrtnutím „Vozidla“. Křížkem se vše vrátí zpět.
-
-### Odkazy na konkrétní pohled
-
-Adresu můžete uložit nebo poslat:
-
-- `#15/49.1960/16.6100` – přiblížení a střed mapy (aktualizuje se samo při posouvání),
-- `?from=Hlavní nádraží&date=2026-10-14&time=08:00&minutes=60` – rovnou otevře mapu dostupnosti.
+The user interface is in Czech. Below, Czech labels are quoted as they appear on screen, with a translation where it helps.
 
 ---
 
-## 2. Jak to funguje
+## 1. User guide
+
+### Left panel – lines and filters
+
+| Control | What it does |
+|---|---|
+| **Search** (*„Hledat číslo linky, cíl nebo zastávku“*) | Filters lines by number, destination or stop, e.g. `1`, `S2`, `Blansko` or `Mendlovo náměstí`. The filter applies to the map, the list and the vehicles. |
+| **Mode chips** (*Tramvaj / Trolejbus / Autobus / Vlak / Loď*) | Turn trams, trolleybuses, buses, trains and boats on or off. |
+| **Layers** (*Vozidla / Linky / Zastávky*) | Show or hide vehicles, lines and stops. Stops appear only when zoomed in. |
+| **Line list** | Click a line to select it. The map zooms to it, the other lines fade, and a detail panel opens with the number of trips, the stops and how many vehicles are running right now. Clicking a stop name in the detail moves the map there. |
+
+You can also select a line by clicking its route or a vehicle on the map. Click an empty spot on the map, or the × in the detail panel, to clear the selection.
+
+### Timeline (below the map)
+
+1. **Date:** pick any day within the timetable's validity, or click **Pracovní den / Sobota / Neděle / Svátek** (workday / Saturday / Sunday / holiday) to jump to the nearest such day. A label next to it shows the kind of day, including the holiday's name (holidays run on the Sunday timetable).
+2. **Time:** drag the slider, or click or drag directly in the chart.
+   - **← / →** moves the time by 1 minute, with **Shift** by 10 minutes.
+3. **Playback:** the **▶** button (or the space bar) animates the day. The speed selector next to it goes from 1× to 900×.
+4. **Chart:** a stacked chart of vehicles in service during the day, by mode. Hovering shows exact counts; the vertical line marks the selected time.
+5. **Counts above the chart:** how many vehicles of each mode are in service at that moment across the whole network. The large number on the right is the number of vehicles currently on the map (after any filtering).
+
+**Vehicles on the map** are dots in the line's color. Hovering one shows the line, destination and next stop; clicking selects the line.
+
+### Where can I get from a stop? (reachability map)
+
+1. Type a stop into the **„Kam se dostanu ze zastávky?“** field, e.g. `Hlavní nádraží`. Alternatively, click a stop on the map and choose **„Kam se odsud dostanu?“**.
+2. Choose a time limit (15–120 min).
+3. The departure uses the **date and time from the timeline**. Changing the time or starting playback recalculates the map.
+
+How to read the map:
+
+| Color | Meaning |
+|---|---|
+| **Blue gradient** (dark → lighter) | Reachable within the chosen limit. The darker, the sooner you get there. |
+| **Light grey** | Reachable, but only after the limit (up to twice the limit, at most 4 hours). |
+| **Dark grey** | Further than you can get from this departure. |
+
+- Each place's color is the **fastest combination of riding and walking** (walking from the last stop is included).
+- When zoomed in, the reachable stops are shown. Hover one to see the travel time; click it to see the **full journey**, e.g. *"S2 8:29 Hlavní nádraží → 8:59 Blansko město"*.
+- From any stop in the result you can start a new calculation.
+- The reachability map turns off the vehicle layer so it doesn't get in the way. Tick *Vozidla* to show vehicles again; the × button restores everything.
+
+### Links to a specific view
+
+The address can be bookmarked or shared:
+
+- `#15/49.1960/16.6100` – zoom level and map centre (updated automatically as you pan),
+- `?from=Hlavní nádraží&date=2026-10-14&time=08:00&minutes=60` – opens the reachability map directly.
+
+---
+
+## 2. How it works
 
 ### Data
 
-| Zdroj | Použití |
+| Source | Used for |
 |---|---|
-| Jízdní řád IDS JMK (GTFS) – <https://kordis-jmk.cz/gtfs/gtfs.zip> | linky, zastávky, spoje, kalendář provozu, přestupy |
-| OpenStreetMap (Overpass API) | skutečné trasy linek (relace sítě IDS JMK), kolejová síť |
-| OSRM (veřejný směrovací server) | dopočet trasy autobusů, které v OSM nejsou zmapované |
-| Dlaždice OpenStreetMap | podkladová mapa v prohlížeči |
+| IDS JMK timetable (GTFS) – <https://kordis-jmk.cz/gtfs/gtfs.zip> | lines, stops, trips, service calendar, transfers |
+| OpenStreetMap (Overpass API) | real line routes (IDS JMK route relations), the rail network |
+| OSRM (public routing server) | routes for buses that aren't mapped in OSM |
+| OpenStreetMap tiles | the base map in the browser |
 
-Data z OSM a OSRM se ukládají do `osm_cache/` a stahují se znovu jen tehdy, když je nový jízdní řád potřebuje (třeba nová linka).
+OSM and OSRM data is stored in `osm_cache/` and only downloaded again when a new timetable needs it (for example, a new line).
 
-### Automatická aktualizace jízdního řádu
+### Automatic timetable updates
 
-KORDIS zveřejňuje nový jízdní řád jednou týdně (v neděli). Aplikace to řeší sama:
+KORDIS publishes a new timetable once a week (on Sundays). The app handles this on its own:
 
-1. **Kontrola:** každých 6 hodin (nastavitelné) se zeptá serveru, jestli se `gtfs.zip` změnil. Používá podmíněný dotaz (`ETag` / `Last-Modified`), takže když se nic nezměnilo, nic se nestahuje.
-2. **Nová verze:** stáhne se (asi 8 MB), ověří se a rozbalí do vlastní složky `feeds/<verze>/`.
-3. **Zpracování na pozadí:** aplikace po celou dobu dál obsluhuje původní verzi a přepne se, až je nová připravená.
-4. **Bezpečnost:** jako aktuální se nová verze potvrdí až po úspěšném zpracování. Když selže (třeba je nedostupný OpenStreetMap), běží dál původní data a při další kontrole se to zkusí znovu. Uchovávají se poslední 2 verze.
-5. **Otevřené stránky:** prohlížeče s otevřenou starší verzí ukážou lištu *„Jízdní řád byl aktualizován – Načíst znovu“*. Po načtení zůstane zachované datum, čas i vybraná zastávka.
+1. **Check:** every 6 hours (configurable) it asks the server whether `gtfs.zip` has changed. It uses a conditional request (`ETag` / `Last-Modified`), so nothing is downloaded when nothing changed.
+2. **New version:** it is downloaded (about 8 MB), validated and unpacked into its own folder, `feeds/<version>/`.
+3. **Background processing:** the app keeps serving the previous version the whole time and switches once the new one is ready.
+4. **Safety:** a new version only becomes current after it has been processed successfully. If processing fails (for example, OpenStreetMap is unavailable), the previous data keeps running and the next check tries again. The last 2 versions are kept.
+5. **Open pages:** browsers that still show the older version display a bar *„Jízdní řád byl aktualizován – Načíst znovu“* ("The timetable was updated – Reload"). After reloading, the date, time and selected stop are kept.
 
-V hlavičce aplikace je vidět, odkdy dokdy jízdní řád platí, kdy byl zveřejněn a kdy proběhla poslední kontrola.
+The app's header shows the timetable's validity period, when it was published and when the last check ran.
 
-### Trasy linek
+### Line routes
 
-GTFS od IDS JMK neobsahuje soubor `shapes.txt` (tvary tras). Trasy se proto skládají takto:
+The IDS JMK GTFS has no `shapes.txt` (route shapes), so routes are put together like this:
 
-1. **Linka zmapovaná v OSM** se spáruje podle čísla a druhu dopravy (293 linek). Trasa se použije, jen pokud leží aspoň 80 % zastávek linky do 200 m od ní.
-2. **Ostatní linky** se dopočítají přes zastávky v pořadí jízdy (58 linek): autobusy a trolejbusy přes OSRM, tramvaje a vlaky nejkratší cestou po kolejích z OSM.
-3. **Rovná čára** mezi zastávkami se použije jen jako poslední možnost.
+1. **Lines mapped in OSM** are matched by line number and mode (293 lines). A route is used only if at least 80 % of the line's stops lie within 200 m of it.
+2. **The other lines** are calculated through their stops in travel order (58 lines): buses and trolleybuses via OSRM, trams and trains as the shortest path over OSM tracks.
+3. **Straight lines** between stops are used only as a last resort.
 
-Jak byla trasa získána, uvidíte v detailu linky.
+A line's detail panel shows how its route was obtained.
 
-### Polohy vozidel
+### Vehicle positions
 
-- Každý spoj, který v daný okamžik jede, je jedno vozidlo.
-- Poloha se počítá z jízdního řádu: mezi odjezdem a příjezdem se vozidlo plynule posouvá po trase, v zastávce stojí po dobu pobytu.
-- Započítávají se i spoje, které vyjely předchozí den a jedou přes půlnoc.
-- `departure_time` na konečné zastávce znamená v těchto datech odjezd na další spoj (čekání na konečné), takže se nepočítá jako jízda.
-- Jde o **polohy podle jízdního řádu**, ne o živá data. Zpoždění se nezohledňuje.
+- Every trip running at a given moment is one vehicle.
+- Positions come from the timetable: between a departure and the next arrival the vehicle moves smoothly along the route, and it waits at a stop for the scheduled dwell time.
+- Trips that started the previous day and run past midnight are included.
+- In this data, `departure_time` at a trip's last stop means the departure of the vehicle's next trip (a layover), so it is not counted as running.
+- These are **scheduled positions**, not live data. Delays are not taken into account.
 
-### Mapa dostupnosti
+### Reachability map
 
-- **Výpočet:** používá algoritmus *Connection Scan* nad jízdním řádem zvoleného dne. Najde nejdřívější příjezd do každé zastávky. Jeden výpočet trvá asi 0,1 s.
-- **Přestupy:**
-  - na stejné zastávce aspoň 1 minuta
-  - oficiální pěší přestupy ze souboru `transfers.txt`
-  - chůze do 400 m mezi blízkými zastávkami (asi 4,5 km/h)
-- **Výchozí bod:** všechna stanoviště se stejným názvem jako vybraná zastávka.
-- **Spojení:** při stejném čase příjezdu má přednost to s menším počtem přestupů.
-- **Plocha mapy:** z každé dosažené zastávky se čas šíří pěší rychlostí do okolí. Síť buněk má velikost asi 160 m a pokrývá celý kraj.
+- **Calculation:** uses the *Connection Scan* algorithm over the chosen day's timetable to find the earliest arrival at every stop. One calculation takes about 0.1 s.
+- **Transfers:**
+  - at least 1 minute at the same stop
+  - the official walking transfers from `transfers.txt`
+  - walks of up to 400 m between nearby stops (about 4.5 km/h)
+- **Starting point:** all platforms with the same name as the chosen stop.
+- **Journeys:** when two journeys arrive at the same time, the one with fewer changes wins.
+- **Map surface:** from every reached stop, time spreads into the surroundings at walking speed. The grid cells are about 160 m and cover the whole region.
 
-### Omezení
+### Limitations
 
-- Bez živých dat o zpoždění a bez návazností vázaných na konkrétní spoje. KORDIS zveřejňuje i GTFS Realtime (`https://kordis-jmk.cz/gtfs/gtfsReal.dat`), takže zpoždění by šlo doplnit.
-- Chůze se počítá vzdušnou čarou s přirážkou na zacházku, ne po skutečných cestách.
-- Asi 5 % úseků mezi zastávkami nejde napasovat na trasu linky (hlavně zastávky regionálních autobusů mimo trasu z OSM). Vozidlo tam jede rovně.
+- No live delay data, and no connections guaranteed between specific trips. KORDIS also publishes GTFS Realtime (`https://kordis-jmk.cz/gtfs/gtfsReal.dat`), so delays could be added.
+- Walking uses straight-line distance with an allowance for detours, not real footpaths.
+- About 5 % of the stop-to-stop sections can't be matched to the line's route (mostly regional bus stops off the OSM route). Vehicles move in a straight line there.
 
 ---
 
-## 3. Spuštění na vlastním počítači
+## 3. Running locally
 
-Je potřeba Python 3.12 nebo novější.
+Requires Python 3.12 or newer.
 
 ```bash
 pip install -r requirements.txt
 python app.py
 ```
 
-Pak otevřete <http://127.0.0.1:5000>.
+Then open <http://127.0.0.1:5000>.
 
-- **Odkud se berou data:** při startu se použije poslední stažená verze jízdního řádu, nebo složka `GTFS/`, pokud existuje. Když není ani jedno, aplikace jízdní řád nejdřív stáhne.
-- **Aktualizace:** běží na pozadí podle odstavce *Automatická aktualizace jízdního řádu*.
+- **Where the data comes from:** at startup the app uses the most recently downloaded timetable, or the `GTFS/` folder if it exists. If neither is available, it downloads the timetable first.
+- **Updates:** run in the background as described in *Automatic timetable updates*.
 
-Parametry:
+Options:
 
 ```bash
-python app.py --update                 # před startem stáhne nejnovější jízdní řád
-python app.py --update --build-only    # jen stáhne a zpracuje, pak skončí
+python app.py --update                 # download the latest timetable before starting
+python app.py --update --build-only    # only download and process it, then exit
 python app.py --cache ./data --port 8000 --host 0.0.0.0
-python app.py --url ""                 # bez stahování, jen data ze složky GTFS/
+python app.py --url ""                 # no downloads, only data from the GTFS/ folder
 ```
 
-- **Start:** s hotovou cache trvá asi 2–3 s, zpracování nové verze asi 10–15 s.
-- **První spuštění bez `osm_cache/`:** stahuje data z OSM a OSRM a trvá asi 7 minut.
+- **Startup:** about 2–3 s with a ready cache; processing a new version takes about 10–15 s.
+- **First run without `osm_cache/`:** downloads data from OSM and OSRM and takes about 7 minutes.
 
 ---
 
@@ -158,93 +160,93 @@ docker build -t idsjmk-map .
 docker run -p 8000:8000 -v idsjmk-data:/app/data idsjmk-map
 ```
 
-Pak otevřete <http://localhost:8000>.
+Then open <http://localhost:8000>.
 
-Co dělá image:
+What the image does:
 
-- **Při sestavení** stáhne aktuální jízdní řád od KORDIS a předpočítá trasy z přiložené `osm_cache/` (`python app.py --update --build-only`, asi 15 s). Sestavení proto potřebuje přístup na internet. Kontejner pak startuje za 2–3 s.
-- **Za běhu** kontroluje nové verze jízdního řádu a nasazuje je bez restartu.
-- Používá produkční server **gunicorn**: 1 proces a 8 vláken. Celý jízdní řád drží v paměti, kontejner potřebuje asi 400 MB RAM, při přepínání na novou verzi krátce až zhruba dvojnásobek.
-- **Health check** je na `GET /healthz`. Vrací i verzi dat a informace o zdroji.
-- Běží pod neprivilegovaným uživatelem `app`.
-- Složka `GTFS/` se do image nekopíruje (je v `.dockerignore`).
+- **At build time** it downloads the current timetable from KORDIS and precomputes the routes from the included `osm_cache/` (`python app.py --update --build-only`, about 15 s). The build therefore needs internet access. The container then starts in 2–3 s.
+- **At runtime** it checks for new timetable versions and deploys them without a restart.
+- It uses the **gunicorn** production server with 1 process and 8 threads. The whole timetable is kept in memory, so the container needs about 400 MB of RAM, briefly around twice that while switching to a new version.
+- **Health check** at `GET /healthz`, which also returns the data version and source information.
+- It runs as the unprivileged user `app`.
+- The `GTFS/` folder is not copied into the image (it is listed in `.dockerignore`).
 
-**Svazek `/app/data` je doporučený.** Uchová stažené verze jízdního řádu a cache i přes restart a nové nasazení. Bez něj kontejner po restartu začne verzí z doby sestavení image a novou verzi si stáhne znovu. Pojmenovaný svazek se při prvním použití naplní obsahem z image.
+**A volume at `/app/data` is recommended.** It keeps downloaded timetable versions and caches across restarts and redeployments. Without it, a restarted container starts from the version that was current when the image was built and downloads the newer one again. A named volume is filled with the image's content the first time it is used.
 
-Nastavení přes proměnné prostředí:
+Environment variables:
 
-| Proměnná | Výchozí | Význam |
+| Variable | Default | Meaning |
 |---|---|---|
-| `GTFS_URL` | `https://kordis-jmk.cz/gtfs/gtfs.zip` | odkud stahovat jízdní řád; prázdná hodnota aktualizace vypne |
-| `GTFS_UPDATE_INTERVAL_HOURS` | `6` | jak často kontrolovat novou verzi |
-| `CACHE_DIR` | `/app/data` | stažené verze (`feeds/`, `feed.json`), cache tras (`network_cache.json`, `osm_cache/`) |
-| `GTFS_DIR` | `/app/GTFS` | volitelný přibalený jízdní řád (záloha, když se stahování nepovede) |
-| `PORT` | `8000` | port uvnitř kontejneru |
+| `GTFS_URL` | `https://kordis-jmk.cz/gtfs/gtfs.zip` | where to download the timetable from; an empty value turns updates off |
+| `GTFS_UPDATE_INTERVAL_HOURS` | `6` | how often to check for a new version |
+| `CACHE_DIR` | `/app/data` | downloaded versions (`feeds/`, `feed.json`), route caches (`network_cache.json`, `osm_cache/`) |
+| `GTFS_DIR` | `/app/GTFS` | optional bundled timetable (fallback if downloading fails) |
+| `PORT` | `8000` | port inside the container |
 
-Je přiložený i `docker-compose.yml` (`docker compose up --build`), který svazek nastavuje.
+A `docker-compose.yml` is included as well (`docker compose up --build`); it sets up the volume.
 
 ---
 
-## 5. Nasazení na Dokploy
+## 5. Deploying to Dokploy
 
-### Příprava repozitáře
+### Preparing the repository
 
-Dokploy sestavuje aplikaci z Git repozitáře. Do repozitáře **patří složka `osm_cache/`** (asi 35 MB). Bez ní by se při každém sestavení znovu stahovala data z OSM, což trvá několik minut a zatěžuje veřejné servery. Složka `GTFS/` potřeba není, jízdní řád se stahuje automaticky.
+Dokploy builds the app from a Git repository. **Include the `osm_cache/` folder** in the repository (currently about 66 MB; the largest file is 25 MB, within GitHub's limits). Without it, every build would download the OSM data again, which takes several minutes and puts load on public servers. The `GTFS/` folder isn't needed, because the timetable is downloaded automatically.
 
 ```bash
 git init
 git add .
-git commit -m "Mapa IDS JMK"
-git remote add origin git@github.com:<uzivatel>/idsjmk-map.git
+git commit -m "IDS JMK map"
+git remote add origin git@github.com:<user>/idsjmk-map.git
 git push -u origin main
 ```
 
-`network_cache.json`, `feeds/` a `feed.json` se do Gitu nedávají (jsou v `.gitignore`), vytvoří se samy.
+`network_cache.json`, `feeds/` and `feed.json` are not committed (they are in `.gitignore`); they are created automatically.
 
-### Varianta A – Application (Dockerfile), doporučeno
+### Option A – Application (Dockerfile), recommended
 
-1. V Dokploy: **Projects → Create Project**, potom **Create Service → Application**.
-2. **Provider:** GitHub / GitLab / Git. Vyberte repozitář a větev `main`.
+1. In Dokploy: **Projects → Create Project**, then **Create Service → Application**.
+2. **Provider:** GitHub / GitLab / Git. Choose the repository and the `main` branch.
 3. **Build Type:** `Dockerfile`, Docker File: `./Dockerfile`, Docker Context Path: `.`
-4. **Deploy:** první sestavení trvá asi 1–2 minuty.
+4. **Deploy:** the first build takes about 1–2 minutes.
 5. **Domains → Add Domain:**
-   - Host: vaše doména (např. `mapa.example.cz`), Path `/`
+   - Host: your domain (e.g. `map.example.com`), Path `/`
    - **Container Port: `8000`**
-   - HTTPS zapnuté, certifikát *Let's Encrypt*
-6. **Advanced → Volumes:** přidejte *Volume Mount* (pojmenovaný svazek, např. `idsjmk-data`) s cestou v kontejneru **`/app/data`**.
-7. Doporučené prostředky (**Advanced → Resources**): limit paměti aspoň **1 GB** (kvůli přepínání verzí).
-8. Volitelně v **Environment** nastavte `GTFS_UPDATE_INTERVAL_HOURS` (výchozí 6).
+   - HTTPS on, certificate *Let's Encrypt*
+6. **Advanced → Volumes:** add a *Volume Mount* (a named volume, e.g. `idsjmk-data`) with the container path **`/app/data`**.
+7. Recommended resources (**Advanced → Resources**): a memory limit of at least **1 GB** (because of version switching).
+8. Optionally set `GTFS_UPDATE_INTERVAL_HOURS` under **Environment** (default 6).
 
-### Varianta B – Docker Compose
+### Option B – Docker Compose
 
-1. **Create Service → Compose**, stejný repozitář, Compose Path `./docker-compose.yml`.
-2. V **Domains** zvolte službu `idsjmk-map` a port `8000`.
+1. **Create Service → Compose**, same repository, Compose Path `./docker-compose.yml`.
+2. Under **Domains**, choose the `idsjmk-map` service and port `8000`.
 
-### Po nasazení
+### After deploying
 
-- Ověřte `https://<domena>/healthz`. Odpověď obsahuje `"status": "ok"`, verzi dat a v části `feed` datum zveřejnění a poslední kontroly.
-- V **Logs** uvidíte řádek `Loaded 347 lines, ... (version …, download feed)`. Při každé kontrole se objeví `GTFS feed unchanged`, nebo `New GTFS feed downloaded …`.
-- Automatické nasazování po `git push` zapnete v Dokploy přes **Auto Deploy** (webhook).
+- Check `https://<domain>/healthz`. The response contains `"status": "ok"`, the data version, and in `feed` the publication date and the time of the last check.
+- **Logs** show a line like `Loaded 347 lines, ... (version …, download feed)`. Each check logs either `GTFS feed unchanged` or `New GTFS feed downloaded …`.
+- To redeploy automatically after `git push`, enable **Auto Deploy** (webhook) in Dokploy.
 
 ---
 
-## 6. Aktualizace jízdního řádu
+## 6. Timetable updates
 
-Jízdní řád se aktualizuje **automaticky** (viz *Automatická aktualizace jízdního řádu*). Nic dělat nemusíte.
+The timetable is updated **automatically** (see *Automatic timetable updates*). Nothing needs to be done.
 
-Ručně můžete:
+Manually, you can:
 
-- **vynutit kontrolu hned:** restartujte službu. Kontrola proběhne 5 s po startu.
-- **použít jiný zdroj nebo vlastní export:** nastavte `GTFS_URL`, nebo aktualizace vypněte (`GTFS_URL=`) a jízdní řád dejte do složky `GTFS/` (pak ji ale odeberte z `.dockerignore`).
+- **force a check now:** restart the service. The check runs 5 s after startup.
+- **use another source or your own export:** set `GTFS_URL`, or turn updates off (`GTFS_URL=`) and put the timetable into the `GTFS/` folder (and remove it from `.dockerignore`).
 
-Když nový jízdní řád obsahuje nové linky, aplikace si při zpracování dotáhne chybějící trasy z OSM nebo OSRM a uloží je do `osm_cache/` ve svazku. Do repozitáře je občas můžete přenést lokálně:
+When a new timetable contains new lines, the app fetches the missing routes from OSM or OSRM while processing it and stores them in `osm_cache/` on the volume. You can bring them into the repository from time to time by running this locally:
 
 ```bash
 python app.py --update --build-only
-git add osm_cache && git commit -m "Aktualizace osm_cache"
+git add osm_cache && git commit -m "Update osm_cache"
 ```
 
-Aktuální trasy z OpenStreetMap stáhnete takto (asi 7 minut, s internetem):
+To download fresh routes from OpenStreetMap (about 7 minutes, needs internet):
 
 ```bash
 rm -rf osm_cache network_cache.json
@@ -253,39 +255,39 @@ python app.py --update --build-only
 
 ---
 
-## 7. Struktura projektu
+## 7. Project structure
 
-| Soubor | Obsah |
+| File | Contents |
 |---|---|
-| `app.py` | Flask server, API, spouštění (vývoj i gunicorn), aktualizace za chodu |
-| `gtfs_update.py` | stahování a správa verzí jízdního řádu |
-| `gtfs_loader.py` | načtení GTFS, sestavení sítě a cache |
-| `osm_tracks.py` | trasy z OpenStreetMap, dopočet přes OSRM a koleje, úseky mezi zastávkami |
-| `timetable.py` | kalendář provozu, svátky, polohy vozidel, denní profil |
-| `reach.py` | mapa dostupnosti (Connection Scan, mřížka časů) |
-| `templates/index.html` | celé webové rozhraní (Leaflet) |
-| `GTFS/` | volitelný přibalený jízdní řád (záloha) |
-| `osm_cache/` | stažená data z OSM a OSRM |
-| `feeds/`, `feed.json` | stažené verze jízdního řádu (vznikají za běhu v `CACHE_DIR`) |
+| `app.py` | Flask server, API, startup (development and gunicorn), live updates |
+| `gtfs_update.py` | downloading and versioning the timetable |
+| `gtfs_loader.py` | loading GTFS, building the network and its cache |
+| `osm_tracks.py` | routes from OpenStreetMap, routing via OSRM and rails, stop-to-stop sections |
+| `timetable.py` | service calendar, holidays, vehicle positions, daily profile |
+| `reach.py` | reachability map (Connection Scan, travel-time grid) |
+| `templates/index.html` | the whole web interface (Leaflet) |
+| `GTFS/` | optional bundled timetable (fallback) |
+| `osm_cache/` | downloaded OSM and OSRM data |
+| `feeds/`, `feed.json` | downloaded timetable versions (created at runtime in `CACHE_DIR`) |
 
 ### API
 
-| Endpoint | Popis |
+| Endpoint | Description |
 |---|---|
-| `GET /api/network` | linky (s trasami) a zastávky |
-| `GET /api/calendar` | platnost jízdního řádu a svátky |
-| `GET /api/profile?date=YYYY-MM-DD` | počet vozidel v provozu po 5 minutách podle druhu dopravy |
-| `GET /api/vehicles?date=YYYY-MM-DD&time=<sekundy od půlnoci>` | vozidla v daném okamžiku |
-| `GET /api/reach?date=…&time=…&stop=<index zastávky>&minutes=60` | mapa dostupnosti |
-| `GET /healthz` | kontrola stavu, verze dat a informace o zdroji |
+| `GET /api/network` | lines (with routes) and stops |
+| `GET /api/calendar` | timetable validity and holidays |
+| `GET /api/profile?date=YYYY-MM-DD` | vehicles in service per 5 minutes, by mode |
+| `GET /api/vehicles?date=YYYY-MM-DD&time=<seconds since midnight>` | vehicles at a given moment |
+| `GET /api/reach?date=…&time=…&stop=<stop index>&minutes=60` | reachability map |
+| `GET /healthz` | health status, data version and source information |
 
-Endpointy kromě `/api/network` přijímají parametr `v=<verze>`. Když server mezitím přešel na novější jízdní řád, odpoví `409` a stránka nabídne nové načtení.
+All endpoints except `/api/network` accept a `v=<version>` parameter. If the server has meanwhile switched to a newer timetable, it responds with `409` and the page offers to reload.
 
 ---
 
-## 8. Poznámky k veřejnému provozu
+## 8. Notes for public deployment
 
-- **Mapové dlaždice** se načítají ze serverů OpenStreetMap (`tile.openstreetmap.org`). Ty jsou určené pro mírný provoz a vyžadují uvedení autorství (je v rohu mapy). Pro větší návštěvnost použijte komerčního poskytovatele dlaždic nebo vlastní server. Adresa dlaždic je v `templates/index.html` (`L.tileLayer(...)`).
-- **Overpass a OSRM** se volají jen při zpracování nové verze jízdního řádu, a to pouze pro data, která chybí v `osm_cache/`. Při běžném provozu ne.
-- **Stahování jízdního řádu** je jeden podmíněný dotaz každých 6 hodin. Celý soubor (8 MB) se stáhne jen tehdy, když se změnil.
-- **Data jízdního řádu:** KORDIS JMK, DPMB. **Mapová data:** © přispěvatelé OpenStreetMap (licence ODbL).
+- **Map tiles** are loaded from the OpenStreetMap servers (`tile.openstreetmap.org`). They are meant for light use and require attribution (shown in the map corner). For heavier traffic, use a commercial tile provider or your own tile server. The tile URL is in `templates/index.html` (`L.tileLayer(...)`).
+- **Overpass and OSRM** are only called while processing a new timetable version, and only for data missing from `osm_cache/`. Not during normal operation.
+- **Timetable download** is one conditional request every 6 hours. The full file (8 MB) is downloaded only when it has changed.
+- **Timetable data:** KORDIS JMK, DPMB. **Map data:** © OpenStreetMap contributors (ODbL license).
