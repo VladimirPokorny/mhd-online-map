@@ -12,3 +12,5 @@ GTFS/*.log
 GTFS/*
 feeds/
 feed.json
+
+.env

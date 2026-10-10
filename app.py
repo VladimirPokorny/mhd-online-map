@@ -38,11 +38,24 @@ def analytics():
     website_id = os.environ.get("UMAMI_WEBSITE_ID", "").strip()
     if not website_id:
         return {"umami": None}
+    script_url = os.environ.get("UMAMI_SCRIPT_URL", "").strip() or "https://cloud.umami.is/script.js"
+    recorder = os.environ.get("UMAMI_RECORDER", "").strip().lower() in ("1", "true", "yes", "on")
     return {"umami": {
         "website_id": website_id,
-        "script_url": os.environ.get("UMAMI_SCRIPT_URL", "").strip() or "https://cloud.umami.is/script.js",
+        "script_url": script_url,
         "domains": os.environ.get("UMAMI_DOMAINS", "").strip(),
+        # Session replays and heatmaps; recorder.js is served next to script.js.
+        "recorder_url": script_url.rsplit("/", 1)[0] + "/recorder.js" if recorder else None,
     }}
+
+
+@app.after_request
+def frame_ancestors(response):
+    """Let the Umami dashboard frame the pages for its heatmap overlay."""
+    origins = os.environ.get("UMAMI_FRAME_ANCESTORS", "").strip()
+    if origins:
+        response.headers["Content-Security-Policy"] = f"frame-ancestors 'self' {origins}"
+    return response
 
 
 @dataclass

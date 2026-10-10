@@ -185,8 +185,10 @@ Environment variables:
 | `UMAMI_WEBSITE_ID` | *(empty)* | [Umami](https://umami.is) website ID; when set, the tracking script is added to every page |
 | `UMAMI_SCRIPT_URL` | `https://cloud.umami.is/script.js` | tracker script URL; point it at a self-hosted Umami (e.g. `https://umami.example.com/script.js`) |
 | `UMAMI_DOMAINS` | *(empty)* | optional comma-separated hostnames to restrict tracking to (Umami's `data-domains`) |
+| `UMAMI_RECORDER` | `false` | `true` also loads Umami's `recorder.js` for session replays and heatmaps (Umami 3.1+; enable them in Umami under *Websites → Edit → Replays & Heatmaps*) |
+| `UMAMI_FRAME_ANCESTORS` | *(empty)* | space-separated origins allowed to frame the pages, needed for the heatmap overlay (e.g. `https://umami.example.com`); sends `Content-Security-Policy: frame-ancestors 'self' …` |
 
-A `docker-compose.yml` is included as well (`docker compose up --build`); it sets up the volume.
+A `docker-compose.yml` is included as well (`docker compose up --build`); it sets up the volume. To configure it locally, copy `.env.example` to `.env` and fill in the values; Compose reads `.env` automatically (it is git- and docker-ignored).
 
 ---
 
@@ -224,14 +226,16 @@ git push -u origin main
    UMAMI_WEBSITE_ID=<website id from Umami>
    UMAMI_SCRIPT_URL=https://umami.example.com/script.js
    UMAMI_DOMAINS=map.example.com
+   UMAMI_RECORDER=true
+   UMAMI_FRAME_ANCESTORS=https://umami.example.com
    ```
-   Only `UMAMI_WEBSITE_ID` is required; leave it out to disable analytics. Changes apply after **Redeploy** (no rebuild needed).
+   Only `UMAMI_WEBSITE_ID` is required; leave it out to disable analytics. `UMAMI_RECORDER` and `UMAMI_FRAME_ANCESTORS` are only needed for session replays and heatmaps. Session recording collects more data than page views, so mention it in your privacy notice. Changes apply after **Redeploy** (no rebuild needed).
 
 ### Option B – Docker Compose
 
 1. **Create Service → Compose**, same repository, Compose Path `./docker-compose.yml`.
 2. Under **Domains**, choose the `idsjmk-map` service and port `8000`.
-3. Optionally set `UMAMI_WEBSITE_ID`, `UMAMI_SCRIPT_URL` and `UMAMI_DOMAINS` under **Environment**; the compose file passes them to the container.
+3. Optionally set the `UMAMI_*` variables (see `.env.example`) under **Environment**; the compose file passes them to the container.
 
 ### After deploying
 

@@ -8,3 +8,6 @@ GTFS/*.log
 # Downloaded GTFS versions (when CACHE_DIR is the project folder)
 feeds/
 feed.json
+
+# Local environment (see .env.example)
+.env

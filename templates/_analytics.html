@@ -1,3 +1,6 @@
 {% if umami %}
 <script defer src="{{ umami.script_url }}" data-website-id="{{ umami.website_id }}"{% if umami.domains %} data-domains="{{ umami.domains }}"{% endif %}></script>
+{% if umami.recorder_url %}
+<script defer src="{{ umami.recorder_url }}" data-website-id="{{ umami.website_id }}"></script>
+{% endif %}
 {% endif %}

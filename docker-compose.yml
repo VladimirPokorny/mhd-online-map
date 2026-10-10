@@ -4,12 +4,14 @@ services:
     restart: unless-stopped
     environment:
       - PORT=8000
-      - GTFS_URL=https://kordis-jmk.cz/gtfs/gtfs.zip
-      - GTFS_UPDATE_INTERVAL_HOURS=6
-      # Optional Umami analytics; set these in Dokploy's Environment tab.
+      - GTFS_URL=${GTFS_URL-https://kordis-jmk.cz/gtfs/gtfs.zip}
+      - GTFS_UPDATE_INTERVAL_HOURS=${GTFS_UPDATE_INTERVAL_HOURS:-6}
+      # Optional Umami analytics; set these in .env or Dokploy's Environment tab (see .env.example).
       - UMAMI_WEBSITE_ID=${UMAMI_WEBSITE_ID:-}
       - UMAMI_SCRIPT_URL=${UMAMI_SCRIPT_URL:-}
       - UMAMI_DOMAINS=${UMAMI_DOMAINS:-}
+      - UMAMI_RECORDER=${UMAMI_RECORDER:-false}
+      - UMAMI_FRAME_ANCESTORS=${UMAMI_FRAME_ANCESTORS:-}
     # Downloaded timetable versions and caches survive restarts and redeploys.
     volumes:
       - idsjmk-data:/app/data
