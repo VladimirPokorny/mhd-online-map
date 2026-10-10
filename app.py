@@ -17,7 +17,7 @@ import threading
 import time
 import traceback
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, render_template, request
@@ -90,6 +90,36 @@ def healthz():
 @app.route("/")
 def index():
     return render_template("index.html", agency=state.network["agency"])
+
+
+def _cz_date(d) -> str:
+    return f"{d.day}. {d.month}. {d.year}"
+
+
+@app.route("/o-aplikaci")
+def about():
+    s = state
+    published = s.feed.get("published")
+    if published:
+        try:
+            published = _cz_date(datetime.fromisoformat(published))
+        except ValueError:
+            published = None
+    modes = {}
+    for r in s.network["routes"]:
+        modes[r["type"]] = modes.get(r["type"], 0) + 1
+    return render_template(
+        "about.html",
+        agency=s.network["agency"],
+        lines=len(s.network["routes"]),
+        stops=len({st["name"] for st in s.network["stops"]}),
+        trips=len(s.timetable.trip_route),
+        modes=modes,
+        valid_from=_cz_date(s.timetable.start),
+        valid_to=_cz_date(s.timetable.end),
+        published=published,
+        auto_update=bool(store and store.url),
+    )
 
 
 @app.route("/api/network")

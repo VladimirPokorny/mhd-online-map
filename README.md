@@ -266,6 +266,7 @@ python app.py --update --build-only
 | `timetable.py` | service calendar, holidays, vehicle positions, daily profile |
 | `reach.py` | reachability map (Connection Scan, travel-time grid) |
 | `templates/index.html` | the whole web interface (Leaflet) |
+| `templates/about.html` | the about / help page for users |
 | `GTFS/` | optional bundled timetable (fallback) |
 | `osm_cache/` | downloaded OSM and OSRM data |
 | `feeds/`, `feed.json` | downloaded timetable versions (created at runtime in `CACHE_DIR`) |
@@ -274,6 +275,8 @@ python app.py --update --build-only
 
 | Endpoint | Description |
 |---|---|
+| `GET /` | the map |
+| `GET /o-aplikaci` | about page for users (Czech): features, how-to, data sources, FAQ |
 | `GET /api/network` | lines (with routes) and stops |
 | `GET /api/calendar` | timetable validity and holidays |
 | `GET /api/profile?date=YYYY-MM-DD` | vehicles in service per 5 minutes, by mode |
