@@ -11,3 +11,5 @@ feed.json
 
 # Local environment (see .env.example)
 .env
+
+*.sqlite*
