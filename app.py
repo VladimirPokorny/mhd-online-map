@@ -278,7 +278,8 @@ def _trip_detail(trip, v: dict):
             "time": _hhmm(t), "expected": _hhmm(t + delay) if future and delay else None,
             "passed": nxt is not None and i < nxt,
         })
-    return {"trip_id": trip_id, "headsign": headsign, "stops": out, "next": nxt,
+    return {"trip_id": trip_id, "number": state.timetable.trip_number.get(str(trip_id)),
+            "headsign": headsign, "stops": out, "next": nxt,
             "at_stop": here is not None and status == STOPPED_AT and here == nxt - 1}
 
 

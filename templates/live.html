@@ -283,6 +283,14 @@ $("lines").addEventListener("click", ev => {
 // the stream gives other carriers five-digit numbers. bmhd.cz keeps a register of the DPMB fleet.
 const isDpmb = id => id >= 1000 && id <= 9999;
 
+// Train composition on vagonweb.cz. Its year is the timetable year, which starts in mid-December;
+// an empty category lets vagonweb find it (Os, Sp, R…).
+function vagonweb(number) {
+  const now = new Date();
+  const year = now.getFullYear() + (now.getMonth() === 11 && now.getDate() >= 14 ? 1 : 0);
+  return `https://www.vagonweb.cz/razeni/vlak.php?zeme=CD&kategorie=&cislo=${number}&rok=${year}`;
+}
+
 // A query of four or more digits is a vehicle number (line numbers have at most three).
 function findVehicle(q) {
   if (!/^\d{4,5}$/.test(q)) return null;
@@ -358,9 +366,12 @@ function renderDetail(d) {
     <div class="delay"><b>${delayText(d.delay)}</b><span class="pill" style="background:${cssVar(c)};color:${dark ? "#1d2433" : "#fff"}">${esc(label)}</span>
 </div>
     <dl class="facts">
+      ${l.type === "Train" && d.trip?.number ? `<dt>Vlak</dt><dd><a href="${vagonweb(d.trip.number)}" target="_blank" rel="noopener"
+        title="Řazení vlaku na vagonweb.cz">${d.trip.number}</a> <span class="small muted">(řazení na vagonweb.cz)</span></dd>` : ""}
       <dt>Vozidlo</dt><dd>${isDpmb(d.id)
         ? `ev. č. <a href="https://www.bmhd.cz/evidence-dpmb/vozp.php?evc=${d.id}" target="_blank" rel="noopener" title="Evidence vozidel DPMB na bmhd.cz">${d.id}</a> (DPMB)`
-        : `č. ${d.id} (jiný dopravce)`} · ${esc(MODE_LABEL[l.type] || l.type)}${d.low_floor ? " · nízkopodlažní ♿" : ""}</dd>
+        : `<span title="Číslo vozidla v systému KORDIS, ne evidenční číslo dopravce">č. ${d.id} (KORDIS)</span>`} · ${esc(MODE_LABEL[l.type] || l.type)}${d.low_floor ? " · nízkopodlažní ♿" : ""}</dd>
+      ${d.trip?.number && l.type !== "Train" ? `<dt>Spoj</dt><dd>č. ${d.trip.number}</dd>` : ""}
       ${course ? `<dt>Pořadí</dt><dd>${course}. vůz linky ${esc(l.short)}</dd>` : ""}
       <dt>Trasa</dt><dd>${esc(l.long)}</dd>
       ${d.last_stop ? `<dt>Poslední zastávka</dt><dd>${esc(d.last_stop)}</dd>` : ""}

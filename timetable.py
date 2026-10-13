@@ -149,6 +149,16 @@ class Timetable:
 
         # Every trip's stops in order, for the live map (GTFS-RT gives the trip_id of a vehicle).
         self.trip_code = trip_code
+        # KORDIS's own connection number of each trip ("Linka/CVlaku = trip_id: 130/4605 = 786");
+        # for trains it is the train number.
+        self.trip_number = {}
+        api = gtfs_dir / "api.txt"
+        if api.exists():
+            for row in api.read_text(encoding="utf-8-sig").splitlines():
+                head, _, tid = row.rpartition("=")
+                number = head.rsplit("/", 1)[-1].strip()
+                if number.isdigit():
+                    self.trip_number[tid.strip()] = int(number)
         order = np.argsort(trip, kind="stable")
         self.st_stop, self.st_arr, self.st_dep = stop[order], arr[order], dep[order]
         self.st_first = np.searchsorted(trip[order], np.arange(len(trips) + 1))
