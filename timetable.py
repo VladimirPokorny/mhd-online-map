@@ -147,6 +147,12 @@ class Timetable:
         self.trip_end[trip[last]] = arr[last]
         self._active_cache = {}
 
+        # Every trip's stops in order, for the live map (GTFS-RT gives the trip_id of a vehicle).
+        self.trip_code = trip_code
+        order = np.argsort(trip, kind="stable")
+        self.st_stop, self.st_arr, self.st_dep = stop[order], arr[order], dep[order]
+        self.st_first = np.searchsorted(trip[order], np.arange(len(trips) + 1))
+
     # ----------------------------------------------------------- calendar ---
 
     def services_on(self, d: date) -> np.ndarray:
@@ -190,6 +196,15 @@ class Timetable:
                 lat, lon = self.stop_coords[self.dw_stop[n]]
                 out.append(self._vehicle(self.dw_trip[n], lat, lon, self.dw_stop[n], True))
         return out
+
+    def trip_stops(self, trip_id: str):
+        """(route index, headsign, [(stop index, arrival s, departure s), …]) of a GTFS trip, or None."""
+        t = self.trip_code.get(str(trip_id))
+        if t is None:
+            return None
+        a, b = self.st_first[t], self.st_first[t + 1]
+        stops = list(zip(self.st_stop[a:b].tolist(), self.st_arr[a:b].tolist(), self.st_dep[a:b].tolist()))
+        return int(self.trip_route[t]), self.trip_headsign[t], stops
 
     def _vehicle(self, trip, lat, lon, stop, at_stop):
         return [round(lat, 6), round(lon, 6), int(self.trip_route[trip]),

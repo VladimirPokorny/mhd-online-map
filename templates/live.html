@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Živá mapa MHD Brno</title>
+<meta name="description" content="Kde právě jsou tramvaje, trolejbusy, autobusy a vlaky IDS JMK, jaké mají zpoždění, kdy přijedou na další zastávky, a jak je na tom provoz aut v Brně.">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg:#fff; --fg:#1d2433; --muted:#5b6475; --line:#e3e6ec; --soft:#f5f7fa; --hover:#f3f5f9; --accent:#00224b;
+    /* Delay categories (status palette; always shown with a label). */
+    --early:#2a78d6; --ontime:#0ca30c; --late2:#fab219; --late5:#ec835a; --late10:#d03b3b; --stale:#898781;
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; font:14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--fg); background:var(--bg); }
+  button, input, select { font:inherit; color:inherit; }
+  a { color:#2a78d6; }
+  #app { display:flex; height:100%; }
+  #side { width:380px; display:flex; flex-direction:column; border-right:1px solid var(--line); background:var(--bg); z-index:1000; min-height:0; }
+  #map { flex:1; min-width:0; }
+  header { padding:12px 16px 10px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:17px; display:flex; align-items:center; gap:8px; }
+  header .links { margin-top:4px; font-size:12px; display:flex; gap:12px; flex-wrap:wrap; }
+  #status { margin-top:4px; font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--ontime); display:inline-block; flex-shrink:0; }
+  .dot.off { background:var(--late10); }
+  .tiles { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; padding:10px 16px; border-bottom:1px solid var(--line); }
+  .tile { background:var(--soft); border-radius:8px; padding:6px 8px; }
+  .tile b { display:block; font-size:18px; line-height:1.2; }
+  .tile span { font-size:11px; color:var(--muted); }
+  .controls { padding:10px 16px; border-bottom:1px solid var(--line); display:flex; flex-direction:column; gap:8px; }
+  #search { width:100%; padding:7px 10px; border:1px solid var(--line); border-radius:6px; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { border:1px solid var(--line); background:var(--bg); border-radius:999px; padding:3px 10px; cursor:pointer; font-size:12px; color:var(--muted); }
+  .chip.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .opts { display:flex; flex-wrap:wrap; gap:4px 12px; font-size:12px; color:var(--muted); }
+  #scroll { flex:1; overflow-y:auto; min-height:0; }
+  .legend { display:flex; flex-wrap:wrap; gap:4px 10px; font-size:11px; color:var(--muted); padding:8px 16px; border-bottom:1px solid var(--line); }
+  .legend span { display:inline-flex; align-items:center; gap:4px; }
+  .legend i { width:12px; height:12px; border-radius:3px; display:inline-block; }
+  h3 { font-size:13px; margin:0; padding:10px 16px 4px; }
+  .lrow { display:flex; align-items:center; gap:10px; padding:5px 16px; cursor:pointer; }
+  .lrow:hover { background:var(--hover); }
+  .lrow .bar { flex:1; height:8px; background:var(--soft); border-radius:4px; overflow:hidden; }
+  .lrow .bar i { display:block; height:100%; border-radius:0 4px 4px 0; }
+  .lrow .val { font-variant-numeric:tabular-nums; font-size:12px; min-width:70px; text-align:right; }
+  .badge { display:inline-block; min-width:36px; text-align:center; font-weight:600; font-size:12px; padding:2px 6px; border-radius:4px; }
+  .muted { color:var(--muted); }
+  .small { font-size:12px; }
+
+  /* vehicle detail */
+  #detail { display:none; border-bottom:1px solid var(--line); padding:12px 16px; }
+  #detail .top { display:flex; align-items:center; gap:8px; }
+  #detail .top .dest { font-weight:600; font-size:15px; }
+  #detail .close { margin-left:auto; border:none; background:none; font-size:20px; color:var(--muted); cursor:pointer; line-height:1; }
+  .delay { display:flex; align-items:baseline; gap:10px; margin:10px 0 6px; flex-wrap:wrap; }
+  .delay b { font-size:26px; line-height:1; }
+  .delay .pill { font-size:12px; font-weight:600; padding:2px 8px; border-radius:999px; color:#fff; }
+  .facts { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; font-size:13px; margin:8px 0; }
+  .facts dt { color:var(--muted); }
+  .facts dd { margin:0; }
+  .spark { margin:6px 0 2px; }
+  .spark svg { display:block; width:100%; height:64px; }
+  .spark text { font-size:10px; fill:var(--muted); }
+  .alert { background:#fff8e6; border:1px solid #f3dca0; border-radius:8px; padding:8px 10px; margin:8px 0; font-size:12px; }
+  .alert b { display:block; margin-bottom:2px; }
+  .stops { margin:8px 0 0; padding:0; list-style:none; font-size:13px; }
+  .stops li { display:grid; grid-template-columns:14px 1fr auto auto; gap:8px; align-items:center; padding:3px 0; border-bottom:1px solid var(--soft); }
+  .stops li .pin { width:10px; height:10px; border-radius:50%; border:2px solid var(--accent); background:var(--bg); }
+  .stops li.passed { color:#a0a6b2; }
+  .stops li.passed .pin { border-color:#c9ccd3; background:#c9ccd3; }
+  .stops li.next { font-weight:600; }
+  .stops li.next .pin { background:var(--accent); }
+  .stops .t { font-variant-numeric:tabular-nums; color:var(--muted); font-size:12px; }
+  .stops .e { font-variant-numeric:tabular-nums; font-size:12px; font-weight:600; }
+  .toggle { border:none; background:none; color:#2a78d6; cursor:pointer; padding:4px 0; font-size:12px; }
+  .btnrow { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .btn { border:1px solid var(--accent); background:var(--accent); color:#fff; border-radius:6px; padding:5px 10px; cursor:pointer; font-size:12px; text-decoration:none; }
+  .btn.ghost { background:var(--bg); color:var(--accent); }
+  .empty { color:var(--muted); font-size:12px; padding:6px 16px; }
+
+  /* map markers */
+  .veh { position:relative; }
+  .veh .b { position:absolute; left:50%; top:50%; transform:translate(-50%, -50%); min-width:26px; height:18px; padding:0 4px;
+    border-radius:9px; font:700 11px/18px system-ui, sans-serif; text-align:center; color:#fff; box-shadow:0 0 0 1.5px #fff, 0 1px 3px rgba(0,0,0,.35); white-space:nowrap; }
+  .veh .b.dark { color:#1d2433; }
+  .veh .arr { position:absolute; left:50%; top:50%; width:0; height:0; margin:-17px 0 0 -4px;
+    border-left:4px solid transparent; border-right:4px solid transparent; border-bottom:6px solid #1d2433; transform-origin:4px 17px; opacity:.75; }
+  .veh.sel .b { box-shadow:0 0 0 2px #fff, 0 0 0 4px #1d2433; z-index:2; }
+  .ev { width:18px; height:18px; border-radius:4px; background:#fff; border:2px solid #d03b3b; color:#d03b3b;
+    font:700 12px/14px system-ui, sans-serif; text-align:center; box-shadow:0 1px 3px rgba(0,0,0,.3); }
+
+  @media (max-width: 760px) {
+    #app { flex-direction:column-reverse; }
+    #side { width:100%; height:48%; border-right:none; border-top:1px solid var(--line); }
+    #map { flex:1; min-height:0; }
+    header { padding:8px 12px; }
+    header h1 { font-size:15px; }
+    .tiles, .controls, .legend { padding-left:12px; padding-right:12px; }
+  }
+</style>
+{% include "_analytics.html" %}
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <header>
+      <h1>Živá mapa MHD</h1>
+      <div class="links"><a href="/">← Mapa sítě a jízdní řád</a><a href="/o-aplikaci">O aplikaci</a></div>
+      <div id="status"><i class="dot"></i><span>Připojuji…</span></div>
+    </header>
+    {% if not enabled %}
+    <div class="empty">Živá mapa je na tomto serveru vypnutá (proměnná prostředí <code>LIVE=false</code>).</div>
+    {% endif %}
+    <div id="scroll">
+      <div id="detail"></div>
+      <div class="tiles">
+        <div class="tile"><b id="tCount">–</b><span>vozidel v provozu</span></div>
+        <div class="tile"><b id="tAvg">–</b><span>průměrné zpoždění</span></div>
+        <div class="tile"><b id="tLate">–</b><span>zpožděných 3+ min</span></div>
+      </div>
+      <div class="controls">
+        <input id="search" type="search" placeholder="Hledat linku, např. 1, 25, E50, N89…" aria-label="Hledat linku">
+        <div class="chips" id="chips"></div>
+        <div class="opts">
+          <label><input type="checkbox" id="onlyLate"> Jen zpožděné (3+ min)</label>
+          <label><input type="checkbox" id="showTraffic" checked> Provoz aut</label>
+          <label title="Ukazují se po přiblížení mapy"><input type="checkbox" id="showEvents" checked> Uzavírky a omezení</label>
+          <label><input type="checkbox" id="follow"> Sledovat vybrané vozidlo</label>
+        </div>
+      </div>
+      <div class="legend" id="legend"></div>
+      <h3>Nejvíc zpožděné linky teď</h3>
+      <div id="lines"></div>
+      <p class="empty">Polohy a zpoždění: KORDIS JMK (aktualizace zhruba každých 30 s). Jízdní řád: GTFS IDS JMK. Provoz aut a uzavírky: dopravniinfo.cz (NDIC).</p>
+    </div>
+  </aside>
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const css = getComputedStyle(document.documentElement);
+const cssVar = n => css.getPropertyValue(n).trim();
+const pad = n => String(n).padStart(2, "0");
+const nf = (v, d = 1) => v == null ? "–" : v.toLocaleString("cs-CZ", { minimumFractionDigits: d, maximumFractionDigits: d });
+const plural = (n, one, few, many) => `${n.toLocaleString("cs-CZ")} ${n === 1 ? one : n >= 2 && n <= 4 ? few : many}`;
+const MODE_LABEL = { Tram: "Tramvaj", Trolleybus: "Trolejbus", Bus: "Autobus", Train: "Vlak", Ferry: "Loď" };
+const MODES = ["Tram", "Trolleybus", "Bus", "Train", "Ferry"];
+const STALE_S = 300;  // no position for 5 minutes: shown grey
+
+let LINES = {}, META = null, VEH = [], selected = null, DETAIL = null, activeModes = new Set(MODES);
+
+// Delay category: [css var, label, dark text?]
+function cat(delay, age) {
+  if (age > STALE_S) return ["--stale", "bez aktuální polohy", false];
+  if (delay == null) return ["--stale", "zpoždění neznámé", false];
+  if (delay < -0.5) return ["--early", "napřed", false];
+  if (delay <= 1) return ["--ontime", "včas", false];
+  if (delay < 5) return ["--late2", "2–4 min", true];
+  if (delay < 10) return ["--late5", "5–9 min", false];
+  return ["--late10", "10 min a víc", false];
+}
+const delayText = d => d == null ? "–" : d < -0.5 ? `${nf(-d, 0)} min napřed` : d <= 0.5 ? "včas" : `+${nf(d, 0)} min`;
+const line = id => LINES[id] || { short: String(id), long: "", type: "Bus", color: "#888", text: "#fff" };
+const badge = id => { const l = line(id); return `<span class="badge" style="background:${l.color};color:${l.text}">${esc(l.short)}</span>`; };
+
+async function get(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
+  return r.json();
+}
+
+// ----------------------------------------------------------------- map ---
+
+const map = L.map("map", { preferCanvas: true, zoomControl: true }).setView([49.195, 16.608], 13);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: '&copy; přispěvatelé <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+}).addTo(map);
+map.createPane("traffic").style.zIndex = 380;
+map.createPane("route").style.zIndex = 420;
+const canvas = L.canvas({ padding: 0.3 });
+const trafficLayer = L.layerGroup().addTo(map);
+const eventLayer = L.layerGroup();  // shown from EVENT_ZOOM, see syncEvents
+const EVENT_ZOOM = 15;
+const routeLayer = L.layerGroup().addTo(map);
+const dotLayer = L.layerGroup().addTo(map);
+const markerLayer = L.layerGroup().addTo(map);
+const markers = new Map();  // vehicle number → marker (badges, zoomed in)
+const LABEL_ZOOM = 13;
+
+function visible(v) {
+  const [id, lineId, , , delay, , age, inactive] = v;
+  if (inactive || !lineId) return false;
+  const l = line(lineId);
+  if (!activeModes.has(l.type) && MODES.includes(l.type)) return false;
+  const q = $("search").value.trim().toLowerCase();
+  if (q && l.short.toLowerCase() !== q && !(q.length > 1 && l.short.toLowerCase().startsWith(q))) return false;
+  if ($("onlyLate").checked && !(delay >= 3 && age <= STALE_S)) return false;
+  return true;
+}
+
+function badgeHtml(v, sel) {
+  const [id, lineId, , , delay, bearing, age] = v;
+  const [c, , dark] = cat(delay, age);
+  const arrow = bearing != null && age <= STALE_S ? `<i class="arr" style="transform:rotate(${bearing}deg)"></i>` : "";
+  return `<div class="veh${sel ? " sel" : ""}">${arrow}<div class="b${dark ? " dark" : ""}" style="background:${cssVar(c)}">${esc(line(lineId).short)}</div></div>`;
+}
+
+function drawVehicles() {
+  const zoomed = map.getZoom() >= LABEL_ZOOM;
+  const bounds = map.getBounds().pad(0.2);
+  const shown = VEH.filter(visible);
+  dotLayer.clearLayers();
+  const keep = new Set();
+  for (const v of shown) {
+    const [id, , lat, lon, delay, , age] = v;
+    if (!zoomed && id !== selected) {
+      L.circleMarker([lat, lon], { renderer: canvas, radius: 4, weight: 1, color: "#fff", fillColor: cssVar(cat(delay, age)[0]), fillOpacity: 1 })
+        .on("click", () => select(id)).addTo(dotLayer);
+      continue;
+    }
+    if (!bounds.contains([lat, lon]) && id !== selected) continue;
+    keep.add(id);
+    const html = badgeHtml(v, id === selected);
+    let m = markers.get(id);
+    if (!m) {
+      m = L.marker([lat, lon], { icon: L.divIcon({ html, className: "", iconSize: [0, 0] }), zIndexOffset: id === selected ? 1000 : 0 })
+        .on("click", () => select(id)).addTo(markerLayer);
+      m._html = html;
+      markers.set(id, m);
+    } else {
+      m.setLatLng([lat, lon]);
+      if (m._html !== html) { m.setIcon(L.divIcon({ html, className: "", iconSize: [0, 0] })); m._html = html; }
+      m.setZIndexOffset(id === selected ? 1000 : 0);
+    }
+  }
+  for (const [id, m] of markers) if (!keep.has(id)) { markerLayer.removeLayer(m); markers.delete(id); }
+}
+
+function syncEvents() {
+  const on = $("showEvents").checked && map.getZoom() >= EVENT_ZOOM;
+  if (on && !map.hasLayer(eventLayer)) eventLayer.addTo(map);
+  if (!on && map.hasLayer(eventLayer)) eventLayer.remove();
+}
+map.on("moveend zoomend", () => { drawVehicles(); syncEvents(); saveUrl(); });
+
+// ------------------------------------------------------------- summary ---
+
+function drawSummary() {
+  const active = VEH.filter(v => v[1] && !v[7] && v[6] <= STALE_S && v[4] != null);
+  $("tCount").textContent = active.length.toLocaleString("cs-CZ");
+  const avg = active.reduce((s, v) => s + Math.max(0, v[4]), 0) / (active.length || 1);
+  $("tAvg").textContent = `${nf(avg)} min`;
+  $("tLate").textContent = `${nf(active.filter(v => v[4] >= 3).length / (active.length || 1) * 100, 0)} %`;
+  // Lines by their vehicles' average delay (at least 2 vehicles, or one 5+ min late).
+  const by = new Map();
+  for (const v of active) {
+    if (!by.has(v[1])) by.set(v[1], []);
+    by.get(v[1]).push(v[4]);
+  }
+  const rows = [...by].map(([id, d]) => ({ id, n: d.length, avg: d.reduce((a, b) => a + b, 0) / d.length, max: Math.max(...d) }))
+    .filter(r => r.n >= 2 || r.max >= 5).sort((a, b) => b.avg - a.avg).slice(0, 15);
+  const max = Math.max(5, ...rows.map(r => r.avg));
+  $("lines").innerHTML = rows.length ? rows.map(r => `<div class="lrow" data-line="${r.id}">${badge(r.id)}
+      <div class="bar"><i style="width:${Math.max(2, r.avg / max * 100)}%;background:${cssVar(cat(r.avg, 0)[0])}"></i></div>
+      <span class="val">${delayText(r.avg)} <span class="muted">· ${r.n}×</span></span></div>`).join("")
+    : `<div class="empty">Žádná linka teď nemá větší zpoždění.</div>`;
+}
+
+$("lines").addEventListener("click", ev => {
+  const row = ev.target.closest(".lrow");
+  if (!row) return;
+  $("search").value = line(Number(row.dataset.line)).short;
+  refilter(true);
+});
+
+function refilter(fit) {
+  drawVehicles();
+  if (fit) {
+    const pts = VEH.filter(visible).map(v => [v[2], v[3]]);
+    if (pts.length) map.fitBounds(pts, { padding: [40, 40], maxZoom: 15 });
+  }
+}
+
+// -------------------------------------------------------------- detail ---
+
+async function select(id) {
+  selected = id;
+  drawVehicles();
+  await loadDetail(true);
+  saveUrl();
+}
+
+function clearSelection() {
+  selected = null; DETAIL = null;
+  $("detail").style.display = "none";
+  routeLayer.clearLayers();
+  drawVehicles();
+  saveUrl();
+}
+
+let routeLine = null;
+async function loadDetail(first) {
+  if (selected == null) return;
+  const id = selected;
+  let d;
+  try { d = await get(`/api/live/vehicle/${id}`); } catch { return; }
+  if (selected !== id) return;
+  DETAIL = d;
+  renderDetail(d);
+  if (first || routeLine !== d.line) {
+    routeLine = d.line;
+    routeLayer.clearLayers();
+    try {
+      const r = await get(`/api/live/route/${d.line}`);
+      const color = line(d.line).color;
+      for (const flat of r.ways) {
+        const pts = [];
+        for (let i = 0; i < flat.length; i += 2) pts.push([flat[i], flat[i + 1]]);
+        L.polyline(pts, { pane: "route", color, weight: 5, opacity: 0.45, interactive: false }).addTo(routeLayer);
+      }
+      for (const [lat, lon, name] of r.stops)
+        L.circleMarker([lat, lon], { pane: "route", radius: 3.5, color, weight: 2, fillColor: "#fff", fillOpacity: 1 })
+          .bindTooltip(esc(name)).addTo(routeLayer);
+    } catch {}
+    routeLayer.trail = null;
+  }
+  // The trail of this run, most recent hour.
+  if (routeLayer.trail) routeLayer.removeLayer(routeLayer.trail);
+  routeLayer.trail = L.polyline(d.trail.map(t => [t[1], t[2]]), { pane: "route", color: "#1d2433", weight: 3, dashArray: "2 5", interactive: false }).addTo(routeLayer);
+  if (first) map.setView([d.lat, d.lon], Math.max(map.getZoom(), 15));
+  else if ($("follow").checked) map.panTo([d.lat, d.lon]);
+}
+
+function renderDetail(d) {
+  const l = line(d.line);
+  const [c, label, dark] = cat(d.delay, d.age);
+  const course = d.course && /^\d{5}$/.test(d.course) ? Number(d.course.slice(3)) : null;
+  const dest = d.trip?.headsign || d.final_stop || "";
+  const age = d.age < 60 ? `před ${d.age} s` : d.age < 3600 ? `před ${Math.round(d.age / 60)} min` : "před více než hodinou";
+  let html = `<div class="top">${badge(d.line)}<span class="dest">${dest ? "→ " + esc(dest) : esc(l.long)}</span>
+    <button class="close" aria-label="Zavřít">×</button></div>
+    <div class="delay"><b>${delayText(d.delay)}</b><span class="pill" style="background:${cssVar(c)};color:${dark ? "#1d2433" : "#fff"}">${esc(label)}</span>
+</div>
+    <dl class="facts">
+      <dt>Vozidlo</dt><dd>č. ${d.id} · ${esc(MODE_LABEL[l.type] || l.type)}${d.low_floor ? " · nízkopodlažní ♿" : ""}</dd>
+      ${course ? `<dt>Pořadí</dt><dd>${course}. vůz linky ${esc(l.short)}</dd>` : ""}
+      <dt>Trasa</dt><dd>${esc(l.long)}</dd>
+      ${d.last_stop ? `<dt>Poslední zastávka</dt><dd>${esc(d.last_stop)}</dd>` : ""}
+      ${d.final_stop ? `<dt>Cíl</dt><dd>${esc(d.final_stop)}</dd>` : ""}
+      <dt>Poloha</dt><dd>aktualizována ${age}</dd>
+    </dl>
+    <div class="spark">${spark(d.trail)}</div>`;
+  for (const a of d.alerts) html += `<div class="alert"><b>${esc(a.header || "Upozornění")}</b>${esc(a.description).replace(/\n/g, "<br>")}</div>`;
+  if (d.trip) {
+    const s = d.trip.stops, nxt = d.trip.next ?? 0, passed = s.filter(x => x.passed).length;
+    html += `<div class="small muted" style="margin-top:8px">Zastávky spoje (jízdní řád → očekávaný příjezd)</div>`;
+    if (passed > 1) html += `<button class="toggle" id="togglePassed">${$("detail").dataset.showPassed ? "Skrýt" : "Zobrazit"} ${plural(passed, "projetou zastávku", "projeté zastávky", "projetých zastávek")}</button>`;
+    html += `<ul class="stops">` + s.map((x, i) => {
+      if (x.passed && passed > 1 && !$("detail").dataset.showPassed && i < passed - 1) return "";
+      const cls = x.passed ? "passed" : i === nxt ? "next" : "";
+      const exp = x.expected ? `<span class="e" style="color:${cssVar(cat(d.delay, 0)[0])}">${x.expected}</span>` : `<span></span>`;
+      return `<li class="${cls}"><i class="pin"></i><span>${esc(x.name)}${i === nxt ? ` <span class="small muted">· ${d.trip.at_stop ? "ve stanici" : "další"}</span>` : ""}</span><span class="t">${x.time}</span>${exp}</li>`;
+    }).join("") + `</ul>`;
+  } else {
+    html += `<p class="small muted">Spoj se nepodařilo spárovat s jízdním řádem, zastávky proto nejsou k dispozici.</p>`;
+  }
+  html += `<div class="btnrow"><button class="btn ghost" id="zoomTo">Přiblížit na vozidlo</button></div>`;
+  const box = $("detail");
+  box.innerHTML = html;
+  box.style.display = "block";
+  box.querySelector(".close").onclick = clearSelection;
+  $("zoomTo").onclick = () => map.setView([d.lat, d.lon], 16);
+  const t = $("togglePassed");
+  if (t) t.onclick = () => { box.dataset.showPassed = box.dataset.showPassed ? "" : "1"; renderDetail(DETAIL); };
+}
+
+// Delay over the run so far (one value per sample).
+function spark(trail) {
+  const pts = trail.filter(t => t[3] != null);
+  if (pts.length < 2) return `<div class="small muted">Vývoj zpoždění se ukáže po několika minutách.</div>`;
+  const W = 340, H = 64, m = { l: 26, r: 6, t: 6, b: 14 };
+  const t0 = pts[0][0], t1 = pts[pts.length - 1][0];
+  const lo = Math.min(0, ...pts.map(p => p[3])), hi = Math.max(3, ...pts.map(p => p[3]));
+  const x = t => m.l + (t - t0) / Math.max(1, t1 - t0) * (W - m.l - m.r);
+  const y = v => m.t + (hi - v) / (hi - lo) * (H - m.t - m.b);
+  const d = pts.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[3]).toFixed(1)}`).join("");
+  const fmt = ms => { const dt = new Date(ms); return `${pad(dt.getHours())}:${pad(dt.getMinutes())}`; };
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Vývoj zpoždění">
+    <line x1="${m.l}" x2="${W - m.r}" y1="${y(0)}" y2="${y(0)}" stroke="#c3c2b7"/>
+    <text x="${m.l - 4}" y="${y(hi) + 4}" text-anchor="end">${nf(hi, 0)}</text><text x="${m.l - 4}" y="${y(0) + 4}" text-anchor="end">0</text>
+    <path d="${d}" fill="none" stroke="#1d2433" stroke-width="2" stroke-linejoin="round"/>
+    <text x="${m.l}" y="${H - 2}">${fmt(t0)}</text><text x="${W - m.r}" y="${H - 2}" text-anchor="end">${fmt(t1)}</text>
+    <text x="${W - m.r}" y="${m.t + 8}" text-anchor="end">zpoždění (min)</text></svg>`;
+}
+
+// ---------------------------------------------------- traffic & events ---
+
+const LEVEL = ["#c9c8c1", "#b3a9ee", "#8d7fe4", "#4a3aa7", "#2f2470"];
+const LEVEL_LABEL = ["plynulý", "mírně zpomalený", "zpomalený", "hustý, kolony", "stojí"];
+const levelOf = r => r >= 0.9 ? 0 : r >= 0.75 ? 1 : r >= 0.55 ? 2 : r >= 0.3 ? 3 : 4;
+let TGEO = null;
+
+async function loadTraffic() {
+  trafficLayer.clearLayers();
+  if (!META?.traffic || !$("showTraffic").checked) return;
+  try {
+    if (!TGEO || !TGEO.length) TGEO = await get("/api/live/traffic/geometry");
+    const t = await get("/api/live/traffic");
+    trafficLayer.clearLayers();
+    for (const [id, name, road, parts] of TGEO) {
+      const now = t.segs[id];
+      if (!now) continue;
+      const lv = levelOf(now[0]);
+      if (lv === 0) continue;  // free-flowing roads stay uncoloured
+      for (const flat of parts) {
+        const pts = [];
+        for (let i = 0; i < flat.length; i += 2) pts.push([flat[i], flat[i + 1]]);
+        L.polyline(pts, { pane: "traffic", renderer: canvas, color: LEVEL[lv], weight: 2 + lv, opacity: 0.85 })
+          .bindTooltip(`${esc(road || "")} ${esc(name || "")}<br>${LEVEL_LABEL[lv]}, ${nf(now[0] * 100, 0)} % volné rychlosti${now[1] ? `, zdržení ${nf(now[1], 0)} s` : ""}`, { sticky: true })
+          .addTo(trafficLayer);
+      }
+    }
+    trafficLayer.stamp = t.stamp;
+    drawStatus();
+  } catch (err) { console.error(err); }
+}
+
+async function loadEvents() {
+  eventLayer.clearLayers();
+  if (!$("showEvents").checked) return;
+  try {
+    const { events } = await get("/api/live/events");
+    const now = Date.now();
+    const parse = s => s ? Date.parse(s.replace(" ", "T")) : null;
+    for (const e of events) {
+      const from = parse(e.from), to = parse(e.to);
+      if ((from && from > now) || (to && to < now)) continue;
+      L.marker([e.lat, e.lon], { icon: L.divIcon({ html: `<div class="ev">!</div>`, className: "", iconSize: [18, 18] }) })
+        .bindPopup(`<b>${esc(e.title)}</b><br>${esc(e.locality)}<br><span class="small">${esc(e.description)}</span>` +
+          (e.to ? `<br><span class="small muted">do ${new Date(to).toLocaleDateString("cs-CZ")}</span>` : ""))
+        .addTo(eventLayer);
+    }
+  } catch (err) { console.error(err); }
+}
+
+// ------------------------------------------------------------- refresh ---
+
+let lastData = null;
+async function loadVehicles() {
+  try {
+    const d = await get("/api/live/vehicles");
+    VEH = d.vehicles;
+    lastData = d;
+    drawVehicles();
+    drawSummary();
+    drawStatus();
+  } catch (err) {
+    console.error(err);
+    $("status").innerHTML = `<i class="dot off"></i><span>Data se nepodařilo načíst.</span>`;
+  }
+}
+
+function drawStatus() {
+  if (!lastData) return;
+  const t = new Date(lastData.time * 1000);
+  const ok = lastData.connected;
+  $("status").innerHTML = `<i class="dot ${ok ? "" : "off"}"></i><span>${ok ? "Živě" : "Odpojeno od zdroje"} · ${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}` +
+    (trafficLayer.stamp ? ` · provoz aut ${new Date(trafficLayer.stamp.replace(" ", "T")).toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" })}` : "") + `</span>`;
+}
+
+function saveUrl() {
+  const qs = new URLSearchParams();
+  if ($("search").value.trim()) qs.set("linka", $("search").value.trim());
+  if (selected != null) qs.set("vuz", selected);
+  const c = map.getCenter();
+  history.replaceState(null, "", `${location.pathname}${qs.toString() ? "?" + qs : ""}#${map.getZoom()}/${c.lat.toFixed(4)}/${c.lng.toFixed(4)}`);
+}
+
+// ---------------------------------------------------------------- init ---
+
+function buildControls() {
+  $("chips").innerHTML = MODES.map(m => `<button class="chip on" data-mode="${m}">${MODE_LABEL[m]}</button>`).join("");
+  $("chips").addEventListener("click", ev => {
+    const b = ev.target.closest(".chip");
+    if (!b) return;
+    const m = b.dataset.mode;
+    activeModes.has(m) ? activeModes.delete(m) : activeModes.add(m);
+    b.classList.toggle("on", activeModes.has(m));
+    drawVehicles();
+  });
+  const cats = [["--early", "napřed"], ["--ontime", "včas (do 1 min)"], ["--late2", "2–4 min"], ["--late5", "5–9 min"], ["--late10", "10+ min"], ["--stale", "bez aktuální polohy"]];
+  $("legend").innerHTML = cats.map(([c, l]) => `<span><i style="background:${cssVar(c)}"></i>${l}</span>`).join("") +
+    `<span><i style="background:${LEVEL[3]}"></i>auta: kolony</span><span><i class="ev" style="width:12px;height:12px;font-size:9px;line-height:9px;border-width:1px">!</i>uzavírka</span>`;
+  let t;
+  $("search").addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { refilter(true); saveUrl(); }, 300); });
+  $("onlyLate").onchange = () => drawVehicles();
+  $("showTraffic").onchange = loadTraffic;
+  $("showEvents").onchange = () => { loadEvents(); syncEvents(); };
+}
+
+async function init() {
+  buildControls();
+  try { META = await get("/api/live/meta"); } catch { $("status").innerHTML = `<i class="dot off"></i><span>Živá mapa není k dispozici.</span>`; return; }
+  LINES = META.lines;
+  const qs = new URLSearchParams(location.search);
+  if (qs.get("linka")) $("search").value = qs.get("linka");
+  const pos = location.hash.slice(1).split("/").map(Number);
+  if (pos.length === 3 && pos.every(Number.isFinite)) map.setView([pos[1], pos[2]], pos[0]);
+  await loadVehicles();
+  if (qs.get("vuz")) select(Number(qs.get("vuz")));
+  else if (qs.get("linka") && !location.hash) refilter(true);
+  setInterval(loadVehicles, 10000);
+  setInterval(() => loadDetail(false), 15000);
+  loadTraffic();
+  setInterval(loadTraffic, 120000);
+  loadEvents();
+  syncEvents();
+}
+
+init();
+</script>
+</body>
+</html>

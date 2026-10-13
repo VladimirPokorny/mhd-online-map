@@ -10,9 +10,13 @@ Environment:
   GTFS_UPDATE_INTERVAL_HOURS  how often to check for a new feed (default 6)
   GTFS_DIR                    bundled fallback feed (default ./GTFS)
   CACHE_DIR                   downloaded feeds + derived caches (default ./ or /app/data)
+  LIVE                        live map of vehicles with their delays, /zive (default true)
+  LIVE_TRAFFIC                car traffic and road closures from dopravniinfo.cz on it (default true)
 """
 import argparse
+import gzip
 import os
+import re
 import threading
 import time
 import traceback
@@ -24,6 +28,7 @@ from flask import Flask, abort, jsonify, render_template, request
 
 from gtfs_loader import load_network
 from gtfs_update import DEFAULT_URL, FeedStore
+from live import STOPPED_AT, LiveState
 from reach import Reachability
 from timetable import Timetable
 
@@ -50,6 +55,18 @@ def analytics():
 
 
 @app.after_request
+def compress(response):
+    """Gzip large JSON (the live vehicle list is ~150 kB raw, ~30 kB compressed)."""
+    if (response.mimetype == "application/json" and not response.direct_passthrough
+            and "gzip" in request.headers.get("Accept-Encoding", "")
+            and response.content_length and response.content_length > 20_000):
+        response.set_data(gzip.compress(response.get_data(), compresslevel=5))
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Vary"] = "Accept-Encoding"
+    return response
+
+
+@app.after_request
 def frame_ancestors(response):
     """Let the Umami dashboard frame the pages for its heatmap overlay."""
     origins = os.environ.get("UMAMI_FRAME_ANCESTORS", "").strip()
@@ -73,6 +90,7 @@ class State:
 
 state: State = None
 store: FeedStore = None
+live: LiveState = None
 _build_lock = threading.Lock()
 
 
@@ -186,6 +204,172 @@ def api_reach():
     return jsonify(s.reachability.query(d, t, stop, budget * 60))
 
 
+# --------------------------------------------------------------------- live ---
+
+_stop_cache = {}
+
+
+def _stop_names() -> dict:
+    """KORDIS stop number (the "U<number>" of a GTFS stop_id) → stop name."""
+    s = state
+    if s.version not in _stop_cache:
+        names = {}
+        for st in s.network["stops"]:
+            m = re.match(r"U(\d+)", st["id"])
+            if m:
+                names.setdefault(int(m.group(1)), st["name"])
+        _stop_cache.clear()
+        _stop_cache[s.version] = names
+    return _stop_cache[s.version]
+
+
+def _lines() -> dict:
+    """KORDIS LineID → line of the current timetable (GTFS route_id is "L<LineID>D<agency>")."""
+    out = {}
+    for r in state.network["routes"]:
+        m = re.match(r"L(\d+)D", r["id"])
+        if m:
+            out[int(m.group(1))] = {"short": r["short"], "long": r["long"], "type": r["type"],
+                                    "color": r["color"], "text": r["text"]}
+    return out
+
+
+def _live() -> LiveState:
+    if live is None:
+        abort(404, "the live map is turned off (LIVE=false)")
+    return live
+
+
+def _hhmm(seconds: int) -> str:
+    return f"{seconds // 3600 % 24:02d}:{seconds // 60 % 60:02d}"
+
+
+def _flat(pts) -> list:
+    return [round(v, 5) for p in pts for v in p]
+
+
+def _trip_detail(trip, v: dict):
+    """The stops of the trip a vehicle runs, with scheduled and expected times."""
+    trip_id, rt_stop, status = trip
+    found = state.timetable.trip_stops(trip_id)
+    if found is None:
+        return None
+    route_idx, headsign, stops = found
+    if not re.match(rf"L{v['line']}D", state.network["routes"][route_idx]["id"]):
+        return None  # the realtime feed still has the vehicle's previous trip
+    net = state.network["stops"]
+    ids = [net[s]["id"] for s, _, _ in stops]
+    nodes = [int(m.group(1)) if (m := re.match(r"U(\d+)", i)) else None for i in ids]
+    # Where the vehicle is: the stream's last stop is fresher than the realtime feed's.
+    nxt, here = None, None
+    if v.get("last_stop") in nodes:
+        here = nodes.index(v["last_stop"])
+        nxt = here + 1
+    elif rt_stop in ids:
+        i = ids.index(rt_stop)
+        here, nxt = (i, i + 1) if status == STOPPED_AT else (None, i)
+    delay = int(round((v.get("delay") or 0) * 60))
+    out = []
+    for i, (s, arr, dep) in enumerate(stops):
+        future = nxt is not None and i >= nxt
+        t = arr if i else dep
+        out.append({
+            "name": net[s]["name"], "lat": net[s]["lat"], "lon": net[s]["lon"],
+            "time": _hhmm(t), "expected": _hhmm(t + delay) if future and delay else None,
+            "passed": nxt is not None and i < nxt,
+        })
+    return {"trip_id": trip_id, "headsign": headsign, "stops": out, "next": nxt,
+            "at_stop": here is not None and status == STOPPED_AT and here == nxt - 1}
+
+
+@app.route("/zive")
+def live_page():
+    return render_template("live.html", agency=state.network["agency"], enabled=live is not None)
+
+
+@app.route("/api/live/meta")
+def api_live_meta():
+    lv = _live()
+    return jsonify({"lines": _lines(), "traffic": lv.traffic_fetched is not None or LIVE_TRAFFIC})
+
+
+@app.route("/api/live/vehicles")
+def api_live_vehicles():
+    """Every vehicle heard from in the last 30 minutes:
+    [number, LineID, lat, lon, delay (min), bearing, age (s), inactive, low-floor, destination, course]."""
+    lv = _live()
+    names, now = _stop_names(), time.time()
+    rows = [[vid, v["line"], v["lat"], v["lon"], v["delay"], v["bearing"], round(now - v["ms"] / 1000),
+             int(v["inactive"]), int(v["lf"]), names.get(v["final_stop"]), v["course"]]
+            for vid, v in lv.snapshot()]
+    return jsonify({"time": int(now), "vehicles": rows, "connected": lv.connected, "realtime": lv.rt_fetched})
+
+
+@app.route("/api/live/vehicle/<int:vid>")
+def api_live_vehicle(vid: int):
+    lv = _live()
+    v = lv.vehicle(vid)
+    if v is None:
+        abort(404, "unknown vehicle")
+    names = _stop_names()
+    trip = lv.trip_of(vid)
+    return jsonify({
+        "id": vid, "line": v["line"], "lat": v["lat"], "lon": v["lon"], "delay": v["delay"], "bearing": v["bearing"],
+        "age": round(time.time() - v["ms"] / 1000), "updated": v["ms"], "low_floor": v["lf"], "inactive": v["inactive"],
+        "course": v["course"], "vtype": v["vtype"],
+        "last_stop": names.get(v["last_stop"]), "final_stop": names.get(v["final_stop"]),
+        "trail": v["trail"], "trip": _trip_detail(trip, v) if trip else None,
+        "alerts": lv.alerts_of(v["line"]), "usual": None,
+    })
+
+
+@app.route("/api/live/route/<int:line>")
+def api_live_route(line: int):
+    """Track and stops of one line, to draw under a selected vehicle."""
+    route = next((r for r in state.network["routes"] if re.match(rf"L{line}D", r["id"])), None)
+    if route is None:
+        abort(404, "unknown line")
+    stops = state.network["stops"]
+    return jsonify({
+        "ways": [_flat(state.network["ways"][w]) for w in route["ways"]],
+        "stops": [[stops[i]["lat"], stops[i]["lon"], stops[i]["name"]] for i in route["stops"]],
+    })
+
+
+@app.route("/api/live/events")
+def api_live_events():
+    lv = _live()
+    return jsonify({"events": lv.events, "fetched": lv.traffic_fetched})
+
+
+@app.route("/api/live/traffic/geometry")
+def api_live_traffic_geometry():
+    """Road segments with car traffic data: [[id, name, road, [flat lat/lon list per part]], …]."""
+    lv = _live()
+    return jsonify([[sid, name, road, [_flat(p) for p in parts]] for sid, (name, road, parts) in lv.segments.items()])
+
+
+@app.route("/api/live/traffic")
+def api_live_traffic():
+    """Car traffic now: {segment id: [speed / free-flow speed, delay s]}."""
+    lv = _live()
+    return jsonify({"stamp": lv.traffic_stamp, "segs": {sid: list(t) for sid, t in lv.traffic.items()}})
+
+
+def _off(name: str) -> bool:
+    return os.environ.get(name, "true").strip().lower() in ("0", "false", "no", "off")
+
+
+LIVE_TRAFFIC = not _off("LIVE_TRAFFIC")
+
+
+def _start_live():
+    global live
+    if not _off("LIVE"):
+        live = LiveState()
+        live.start(traffic=LIVE_TRAFFIC)
+
+
 # ------------------------------------------------------------------ loading ---
 
 def build_state(gtfs_dir: Path, cache_dir: Path, feed: dict) -> State:
@@ -278,6 +462,7 @@ def create_app():
     if url:
         hours = float(os.environ.get("GTFS_UPDATE_INTERVAL_HOURS", "6"))
         threading.Thread(target=_update_loop, args=(cache_dir, hours * 3600), daemon=True).start()
+    _start_live()
     return app
 
 
@@ -301,6 +486,7 @@ def main():
     if url:
         hours = float(os.environ.get("GTFS_UPDATE_INTERVAL_HOURS", "6"))
         threading.Thread(target=_update_loop, args=(args.cache, hours * 3600), daemon=True).start()
+    _start_live()
     print(f"Open http://{args.host}:{args.port}")
     app.run(host=args.host, port=args.port, threaded=True)
 

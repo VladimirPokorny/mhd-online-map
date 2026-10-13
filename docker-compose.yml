@@ -6,6 +6,9 @@ services:
       - PORT=8000
       - GTFS_URL=${GTFS_URL-https://kordis-jmk.cz/gtfs/gtfs.zip}
       - GTFS_UPDATE_INTERVAL_HOURS=${GTFS_UPDATE_INTERVAL_HOURS:-6}
+      # Live map (/zive); see .env.example.
+      - LIVE=${LIVE:-true}
+      - LIVE_TRAFFIC=${LIVE_TRAFFIC:-true}
       # Optional Umami analytics; set these in .env or Dokploy's Environment tab (see .env.example).
       - UMAMI_WEBSITE_ID=${UMAMI_WEBSITE_ID:-}
       - UMAMI_SCRIPT_URL=${UMAMI_SCRIPT_URL:-}

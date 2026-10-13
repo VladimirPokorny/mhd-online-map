@@ -6,6 +6,7 @@ A web app that shows the network of the South Moravian Region's integrated publi
 - **Vehicles** are shown at any time of the chosen day: workday, Saturday, Sunday or public holiday.
 - **A chart** shows how many vehicles are in service throughout the day, by mode of transport.
 - **A reachability map** shows where you can get from a chosen stop within 15–120 minutes.
+- **A live map** (`/zive`) shows where every vehicle is right now and how late it is, with the remaining stops and their expected times, service alerts for the line, live car traffic and road closures in Brno.
 
 The user interface is in Czech. Below, Czech labels are quoted as they appear on screen, with a translation where it helps.
 
@@ -53,6 +54,21 @@ How to read the map:
 - When zoomed in, the reachable stops are shown. Hover one to see the travel time; click it to see the **full journey**, e.g. *"S2 8:29 Hlavní nádraží → 8:59 Blansko město"*.
 - From any stop in the result you can start a new calculation.
 - The reachability map turns off the vehicle layer so it doesn't get in the way. Tick *Vozidla* to show vehicles again; the × button restores everything.
+
+### Live map (`/zive`)
+
+Linked from the map's sidebar (*„Živá mapa se zpožděním“*). It shows the real positions of all IDS JMK vehicles, refreshed every 10 seconds.
+
+| Part | What it does |
+|---|---|
+| **Vehicles** | A badge with the line number at each vehicle's real position, coloured by its current delay: blue *napřed* (early), green *včas* (on time, up to 1 min), yellow 2–4 min, orange 5–9 min, red 10+ min, grey when the position is more than 5 minutes old. The arrow shows the direction. Zoomed out, vehicles are dots. |
+| **Vehicle detail** (click a vehicle) | Line, destination, delay, vehicle number, mode, low-floor, run number, route, last stop, age of the position, how the delay developed during the run, **service alerts** for the line (closures, diversions, moved stops), and **all stops of the trip** with the timetable time and the expected time (timetable + current delay). The map shows the line's route and stops and the vehicle's trail. *Sledovat vybrané vozidlo* keeps the map on it. |
+| **Summary** | Vehicles in service, average delay, share delayed 3+ min, and the most delayed lines right now (click one to show only that line). |
+| **Filters** | Line search, modes, *Jen zpožděné* (only vehicles 3+ min late). |
+| **Car traffic** | Roads in Brno where cars are slow right now (dopravniinfo.cz, refreshed every 2 minutes); free-flowing roads stay uncoloured. Hover a road for its speed. |
+| **Closures** | Road closures and restrictions in Brno (dopravniinfo.cz), shown when zoomed in. |
+
+The address keeps the line, the vehicle and the position: `/zive?linka=1&vuz=1720#15/49.2/16.6`.
 
 ### Links to a specific view
 
@@ -117,9 +133,18 @@ A line's detail panel shows how its route was obtained.
 - **Journeys:** when two journeys arrive at the same time, the one with fewer changes wins.
 - **Map surface:** from every reached stop, time spreads into the surroundings at walking speed. The grid cells are about 160 m and cover the whole region.
 
+### Live map
+
+Everything is kept in memory (`live.py`); nothing is stored.
+
+- **Positions and delays** come from the KORDIS vehicle stream (`wss://gis.brno.cz/geoevent/ws/services/Kordis_stream/StreamServer/subscribe`, one message per vehicle about every 30 s, delay in whole minutes). The server keeps the latest state of every vehicle and its trail for the last hour.
+- **The trip** a vehicle runs comes from KORDIS GTFS Realtime (`https://kordis-jmk.cz/gtfs/gtfsReal.dat`, polled every 30 s): its vehicle label is the stream's vehicle number, and it carries the GTFS `trip_id`. The trip's stops come from the loaded timetable; the vehicle's position on it is the stream's *last stop*. Expected times are the timetable times plus the current delay. The realtime trip IDs refer to KORDIS's current timetable, so stops are only shown when the app runs the current version (the default with automatic updates; not with `--url ""` and an old `GTFS/` folder).
+- **Service alerts** per line come from the same GTFS Realtime feed.
+- **Car traffic and road closures** come from dopravniinfo.cz (Národní dopravní informační centrum), polled every 2 minutes: speed as a share of free-flow speed on ~1,000 road segments in Brno, and current closures and restrictions. These are the endpoints of its public map (`api.dopravniinfo.cz/TownData.ashx?town=582786`), **not a documented API**, and may change; the official equivalent is the NDIC DATEX II feed (free, needs registration at mobilitydata.rsd.cz). Geometry comes in S-JTSK (EPSG:5514) and is converted with `pyproj`. `LIVE_TRAFFIC=false` turns it off.
+
 ### Limitations
 
-- No live delay data, and no connections guaranteed between specific trips. KORDIS also publishes GTFS Realtime (`https://kordis-jmk.cz/gtfs/gtfsReal.dat`), so delays could be added.
+- The main map shows scheduled positions; real positions and delays are on the live map. No connections guaranteed between specific trips.
 - Walking uses straight-line distance with an allowance for detours, not real footpaths.
 - About 5 % of the stop-to-stop sections can't be matched to the line's route (mostly regional bus stops off the OSM route). Vehicles move in a straight line there.
 
@@ -182,6 +207,8 @@ Environment variables:
 | `CACHE_DIR` | `/app/data` | downloaded versions (`feeds/`, `feed.json`), route caches (`network_cache.json`, `osm_cache/`) |
 | `GTFS_DIR` | `/app/GTFS` | optional bundled timetable (fallback if downloading fails) |
 | `PORT` | `8000` | port inside the container |
+| `LIVE` | `true` | the live map (`/zive`): one WebSocket connection to the KORDIS vehicle stream and GTFS Realtime every 30 s |
+| `LIVE_TRAFFIC` | `true` | car traffic and road closures in Brno on the live map (dopravniinfo.cz, every 2 minutes) |
 | `UMAMI_WEBSITE_ID` | *(empty)* | [Umami](https://umami.is) website ID; when set, the tracking script is added to every page |
 | `UMAMI_SCRIPT_URL` | `https://cloud.umami.is/script.js` | tracker script URL; point it at a self-hosted Umami (e.g. `https://umami.example.com/script.js`) |
 | `UMAMI_DOMAINS` | *(empty)* | optional comma-separated hostnames to restrict tracking to (Umami's `data-domains`) |
@@ -281,6 +308,8 @@ python app.py --update --build-only
 | `timetable.py` | service calendar, holidays, vehicle positions, daily profile |
 | `reach.py` | reachability map (Connection Scan, travel-time grid) |
 | `templates/index.html` | the whole web interface (Leaflet) |
+| `live.py` | live state of the vehicles: vehicle stream, GTFS Realtime (trips, alerts), car traffic and closures |
+| `templates/live.html` | the live map |
 | `templates/about.html` | the about / help page for users |
 | `GTFS/` | optional bundled timetable (fallback) |
 | `osm_cache/` | downloaded OSM and OSRM data |
@@ -298,6 +327,14 @@ python app.py --update --build-only
 | `GET /api/vehicles?date=YYYY-MM-DD&time=<seconds since midnight>` | vehicles at a given moment |
 | `GET /api/reach?date=…&time=…&stop=<stop index>&minutes=60` | reachability map |
 | `GET /healthz` | health status, data version and source information |
+| `GET /zive` | live map (Czech) |
+| `GET /api/live/meta` | line names and colours by KORDIS `LineID` |
+| `GET /api/live/vehicles` | every vehicle heard from in the last 30 min: `[number, LineID, lat, lon, delay (min), bearing, age (s), inactive, low-floor, destination, course]` |
+| `GET /api/live/vehicle/<number>` | one vehicle: state, trail, trip with stops and expected times, service alerts |
+| `GET /api/live/route/<LineID>` | track and stops of a line |
+| `GET /api/live/traffic/geometry` | car traffic road segments: `[id, name, road, [flat lat/lon list per part]]` |
+| `GET /api/live/traffic` | car traffic now: `{segment id: [speed / free-flow speed, delay s]}` |
+| `GET /api/live/events` | road closures and restrictions in Brno |
 
 All endpoints except `/api/network` accept a `v=<version>` parameter. If the server has meanwhile switched to a newer timetable, it responds with `409` and the page offers to reload.
 
@@ -308,4 +345,5 @@ All endpoints except `/api/network` accept a `v=<version>` parameter. If the ser
 - **Map tiles** are loaded from the OpenStreetMap servers (`tile.openstreetmap.org`). They are meant for light use and require attribution (shown in the map corner). For heavier traffic, use a commercial tile provider or your own tile server. The tile URL is in `templates/index.html` (`L.tileLayer(...)`).
 - **Overpass and OSRM** are only called while processing a new timetable version, and only for data missing from `osm_cache/`. Not during normal operation.
 - **Timetable download** is one conditional request every 6 hours. The full file (8 MB) is downloaded only when it has changed.
-- **Timetable data:** KORDIS JMK, DPMB. **Map data:** © OpenStreetMap contributors (ODbL license).
+- **The live map** keeps one WebSocket connection to gis.brno.cz open, loads the ~220 kB GTFS Realtime feed every 30 seconds and about 0.9 MB from dopravniinfo.cz every 2 minutes, however many people use it. Browsers get the vehicles from this server every 10 seconds (~30 kB gzipped).
+- **Timetable data:** KORDIS JMK, DPMB. **Map data:** © OpenStreetMap contributors (ODbL license). **Car traffic and closures:** Národní dopravní informační centrum (ŘSD), dopravniinfo.cz.
