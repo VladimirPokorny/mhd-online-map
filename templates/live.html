@@ -121,7 +121,7 @@
         <div class="tile"><b id="tLate">–</b><span>zpožděných 3+ min</span></div>
       </div>
       <div class="controls">
-        <input id="search" type="search" placeholder="Hledat linku, např. 1, 25, E50, N89…" aria-label="Hledat linku">
+        <input id="search" type="search" placeholder="Linka (1, 25, E50…) nebo ev. č. vozu (1720)" aria-label="Hledat linku nebo vozidlo">
         <div class="chips" id="chips"></div>
         <div class="opts">
           <label><input type="checkbox" id="onlyLate"> Jen zpožděné (3+ min)</label>
@@ -198,6 +198,7 @@ function visible(v) {
   const l = line(lineId);
   if (!activeModes.has(l.type) && MODES.includes(l.type)) return false;
   const q = $("search").value.trim().toLowerCase();
+  if (/^\d{4,5}$/.test(q)) return id === Number(q);
   if (q && l.short.toLowerCase() !== q && !(q.length > 1 && l.short.toLowerCase().startsWith(q))) return false;
   if ($("onlyLate").checked && !(delay >= 3 && age <= STALE_S)) return false;
   return true;
@@ -278,6 +279,16 @@ $("lines").addEventListener("click", ev => {
   refilter(true);
 });
 
+// DPMB numbers its vehicles 1000–9999 (trams 1xxx, buses 2xxx/6xxx/7xxx, trolleybuses 3xxx);
+// the stream gives other carriers five-digit numbers. bmhd.cz keeps a register of the DPMB fleet.
+const isDpmb = id => id >= 1000 && id <= 9999;
+
+// A query of four or more digits is a vehicle number (line numbers have at most three).
+function findVehicle(q) {
+  if (!/^\d{4,5}$/.test(q)) return null;
+  return VEH.find(v => v[0] === Number(q)) || null;
+}
+
 function refilter(fit) {
   drawVehicles();
   if (fit) {
@@ -347,7 +358,9 @@ function renderDetail(d) {
     <div class="delay"><b>${delayText(d.delay)}</b><span class="pill" style="background:${cssVar(c)};color:${dark ? "#1d2433" : "#fff"}">${esc(label)}</span>
 </div>
     <dl class="facts">
-      <dt>Vozidlo</dt><dd>č. ${d.id} · ${esc(MODE_LABEL[l.type] || l.type)}${d.low_floor ? " · nízkopodlažní ♿" : ""}</dd>
+      <dt>Vozidlo</dt><dd>${isDpmb(d.id)
+        ? `ev. č. <a href="https://www.bmhd.cz/evidence-dpmb/vozp.php?evc=${d.id}" target="_blank" rel="noopener" title="Evidence vozidel DPMB na bmhd.cz">${d.id}</a> (DPMB)`
+        : `č. ${d.id} (jiný dopravce)`} · ${esc(MODE_LABEL[l.type] || l.type)}${d.low_floor ? " · nízkopodlažní ♿" : ""}</dd>
       ${course ? `<dt>Pořadí</dt><dd>${course}. vůz linky ${esc(l.short)}</dd>` : ""}
       <dt>Trasa</dt><dd>${esc(l.long)}</dd>
       ${d.last_stop ? `<dt>Poslední zastávka</dt><dd>${esc(d.last_stop)}</dd>` : ""}
@@ -497,7 +510,14 @@ function buildControls() {
   $("legend").innerHTML = cats.map(([c, l]) => `<span><i style="background:${cssVar(c)}"></i>${l}</span>`).join("") +
     `<span><i style="background:${LEVEL[3]}"></i>auta: kolony</span><span><i class="ev" style="width:12px;height:12px;font-size:9px;line-height:9px;border-width:1px">!</i>uzavírka</span>`;
   let t;
-  $("search").addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { refilter(true); saveUrl(); }, 300); });
+  $("search").addEventListener("input", () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      const v = findVehicle($("search").value.trim());
+      if (v) select(v[0]); else refilter(true);
+      saveUrl();
+    }, 300);
+  });
   $("onlyLate").onchange = () => drawVehicles();
   $("showTraffic").onchange = loadTraffic;
   $("showEvents").onchange = () => { loadEvents(); syncEvents(); };
@@ -512,7 +532,8 @@ async function init() {
   const pos = location.hash.slice(1).split("/").map(Number);
   if (pos.length === 3 && pos.every(Number.isFinite)) map.setView([pos[1], pos[2]], pos[0]);
   await loadVehicles();
-  if (qs.get("vuz")) select(Number(qs.get("vuz")));
+  const byNumber = findVehicle(qs.get("linka") || "");
+  if (qs.get("vuz") || byNumber) select(Number(qs.get("vuz")) || byNumber[0]);
   else if (qs.get("linka") && !location.hash) refilter(true);
   setInterval(loadVehicles, 10000);
   setInterval(() => loadDetail(false), 15000);
