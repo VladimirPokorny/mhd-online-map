@@ -387,6 +387,7 @@ function renderDetail(d) {
   let html = `<div class="top">${badge(d.line)}<span class="dest">${dest ? "→ " + esc(dest) : esc(l.long)}</span>
     <button class="close" aria-label="Zavřít">×</button></div>
     <div class="delay"><b>${delayText(d.delay)}</b><span class="pill" style="background:${cssVar(c)};color:${dark ? "#1d2433" : "#fff"}">${esc(label)}</span>
+      ${d.estimated ? `<span class="small muted" title="Odhad z polohy vozidla a jízdního řádu, hlavní zdroj zpoždění teď neposílá data">odhad</span>` : ""}
 </div>
     <dl class="facts">
       ${l.type === "Train" && d.trip?.number ? `<dt>Vlak</dt><dd><a href="${vagonweb(d.trip.number)}" target="_blank" rel="noopener"
@@ -524,8 +525,12 @@ async function loadVehicles() {
 function drawStatus() {
   if (!lastData) return;
   const t = new Date(lastData.time * 1000);
-  const ok = lastData.connected;
-  $("status").innerHTML = `<i class="dot ${ok ? "" : "off"}"></i><span>${ok ? "Živě" : "Odpojeno od zdroje"} · ${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}` +
+  // "gtfs-rt": the vehicle stream is silent, positions come from GTFS Realtime and delays are estimated.
+  const src = lastData.source;
+  const label = src === "stream" ? "Živě" : src === "gtfs-rt"
+    ? `<span title="Hlavní zdroj poloh KORDIS teď neposílá data. Polohy jsou z GTFS Realtime a zpoždění je odhadnuté podle jízdního řádu.">Živě · záložní zdroj, zpoždění odhadnuté</span>`
+    : "Odpojeno od zdroje";
+  $("status").innerHTML = `<i class="dot ${src ? "" : "off"}"></i><span>${label} · ${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}` +
     (trafficLayer.stamp ? ` · provoz aut ${new Date(trafficLayer.stamp.replace(" ", "T")).toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" })}` : "") + `</span>`;
 }
 

@@ -15,6 +15,7 @@ Environment:
 """
 import argparse
 import gzip
+import math
 import os
 import re
 import threading
@@ -23,6 +24,7 @@ import traceback
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from flask import Flask, abort, jsonify, render_template, request, send_from_directory
 
@@ -33,6 +35,7 @@ from reach import Reachability
 from timetable import Timetable
 
 BASE_DIR = Path(__file__).resolve().parent
+PRAGUE = ZoneInfo("Europe/Prague")  # timetable times are local time
 
 app = Flask(__name__)
 
@@ -310,6 +313,57 @@ def _flat(pts) -> list:
     return [round(v, 5) for p in pts for v in p]
 
 
+def _stop_key(stop_id: str):
+    """(stop number, post number) of a KORDIS stop_id; GTFS Realtime zero-pads them (U09440Z01 = U9440Z1)."""
+    m = re.match(r"U(\d+)Z(\d+)", stop_id or "")
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def _estimate(trip_id: str, stop_id: str, status: int, lat: float, lon: float, ts: int):
+    """Line, delay (min) and last / final stop of a vehicle from its GTFS Realtime position and the timetable.
+
+    Used while the vehicle stream, which reports delays itself, is silent. A vehicle at a stop
+    is late by the time past the scheduled departure (early: before the arrival). Between two
+    stops, the scheduled time at its position is interpolated by the straight-line distances
+    to the previous and the next stop."""
+    s = state
+    found = s.timetable.trip_stops(trip_id)
+    if found is None:
+        return None
+    route_idx, _, stops = found
+    m = re.match(r"L(\d+)D", s.network["routes"][route_idx]["id"])
+    keys = [_stop_key(s.network["stops"][i]["id"]) for i, _, _ in stops]
+    key = _stop_key(stop_id)
+    if not m or key not in keys:
+        return None
+    i = keys.index(key)
+    local = datetime.fromtimestamp(ts, PRAGUE)
+    now = local.hour * 3600 + local.minute * 60 + local.second
+    if stops[0][2] - now > 12 * 3600:
+        now += 86_400  # a trip of the previous service day, after midnight
+    if now < stops[0][2]:
+        # Waiting for its next trip: on time at the terminus, or not in service yet (parked).
+        if stops[0][2] - now > 10 * 60:
+            return None
+        return {"line": int(m.group(1)), "delay": 0.0, "last_stop": keys[0][0], "final_stop": keys[-1][0]}
+    _, arr, dep = stops[i]
+    if status == STOPPED_AT or i == 0:
+        delay = now - arr if now < arr and i else max(0, now - dep)
+    else:
+        prev = s.network["stops"][stops[i - 1][0]]
+        nxt = s.network["stops"][stops[i][0]]
+        k = math.cos(math.radians(lat))
+        dist = lambda st: math.hypot(st["lat"] - lat, (st["lon"] - lon) * k)
+        a, b = dist(prev), dist(nxt)
+        f = a / (a + b) if a + b else 1
+        delay = now - (stops[i - 1][2] + f * (arr - stops[i - 1][2]))
+    if abs(delay) > 90 * 60:
+        return None  # most likely the feed still names a trip the vehicle has finished
+    last = i if status == STOPPED_AT else max(i - 1, 0)
+    return {"line": int(m.group(1)), "delay": round(delay / 60, 1),
+            "last_stop": keys[last][0], "final_stop": keys[-1][0]}
+
+
 def _trip_detail(trip, v: dict):
     """The stops of the trip a vehicle runs, with scheduled and expected times."""
     trip_id, rt_stop, status = trip
@@ -320,15 +374,16 @@ def _trip_detail(trip, v: dict):
     if not re.match(rf"L{v['line']}D", state.network["routes"][route_idx]["id"]):
         return None  # the realtime feed still has the vehicle's previous trip
     net = state.network["stops"]
-    ids = [net[s]["id"] for s, _, _ in stops]
-    nodes = [int(m.group(1)) if (m := re.match(r"U(\d+)", i)) else None for i in ids]
-    # Where the vehicle is: the stream's last stop is fresher than the realtime feed's.
+    keys = [_stop_key(net[s]["id"]) for s, _, _ in stops]
+    nodes = [k[0] if k else None for k in keys]
+    # Where the vehicle is: the stream's last stop is fresher than the realtime feed's,
+    # unless the position itself came from the realtime feed.
     nxt, here = None, None
-    if v.get("last_stop") in nodes:
+    if v.get("last_stop") in nodes and not v.get("estimated"):
         here = nodes.index(v["last_stop"])
         nxt = here + 1
-    elif rt_stop in ids:
-        i = ids.index(rt_stop)
+    elif _stop_key(rt_stop) in keys:
+        i = keys.index(_stop_key(rt_stop))
         here, nxt = (i, i + 1) if status == STOPPED_AT else (None, i)
     delay = int(round((v.get("delay") or 0) * 60))
     out = []
@@ -367,7 +422,8 @@ def api_live_vehicles():
     rows = [[vid, v["line"], v["lat"], v["lon"], v["delay"], v["bearing"], round(now - v["ms"] / 1000),
              int(v["inactive"]), int(v["lf"]), names.get(v["final_stop"]), v["course"]]
             for vid, v in lv.snapshot()]
-    return jsonify({"time": int(now), "vehicles": rows, "connected": lv.connected, "realtime": lv.rt_fetched})
+    return jsonify({"time": int(now), "vehicles": rows, "connected": lv.connected, "realtime": lv.rt_fetched,
+                    "source": lv.source()})
 
 
 @app.route("/api/live/vehicle/<int:vid>")
@@ -382,7 +438,7 @@ def api_live_vehicle(vid: int):
     return jsonify({
         "id": vid, "line": v["line"], "lat": v["lat"], "lon": v["lon"], "delay": v["delay"], "bearing": v["bearing"],
         "age": round(time.time() - v["ms"] / 1000), "updated": v["ms"], "low_floor": v["lf"], "inactive": v["inactive"],
-        "course": v["course"], "vtype": v["vtype"],
+        "course": v["course"], "vtype": v["vtype"], "estimated": v["estimated"],
         "last_stop": names.get(v["last_stop"]), "final_stop": names.get(v["final_stop"]),
         "trail": v["trail"], "trip": _trip_detail(trip, v) if trip else None,
         "alerts": lv.alerts_of(v["line"]), "usual": None,
@@ -436,6 +492,7 @@ def _start_live():
     global live
     if not _off("LIVE"):
         live = LiveState()
+        live.estimate = _estimate
         live.start(traffic=LIVE_TRAFFIC)
 
 

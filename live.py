@@ -25,6 +25,7 @@ TRAFFIC_URL = "https://api.dopravniinfo.cz/TownData.ashx?town=582786"  # 582786 
 RT_POLL_S = 30
 TRAFFIC_POLL_S = 120  # the dopravniinfo.cz map itself refreshes every 2 minutes
 TRAIL = 120  # samples kept per vehicle, about an hour
+STREAM_SILENT_S = 120  # no stream message for this long: positions come from GTFS Realtime instead
 USER_AGENT = "idsjmk-map/1.0 (live map)"
 # GTFS Realtime VehicleStopStatus
 INCOMING_AT, STOPPED_AT, IN_TRANSIT_TO = 0, 1, 2
@@ -112,6 +113,8 @@ class LiveState:
         self.traffic = {}     # traffic segment id → (speed / free-flow speed, delay s)
         self.connected = False
         self.received = 0
+        self.stream_heard = 0  # time of the last stream message
+        self.estimate = None   # set by the app: delay and stops of a trip from the timetable, see poll_rt
         self.rt_fetched = self.traffic_fetched = None
         self.traffic_stamp = None
 
@@ -134,6 +137,7 @@ class LiveState:
                 while True:
                     try:
                         self.update(json.loads(ws.recv())["attributes"])
+                        self.stream_heard = time.time()
                     except (KeyError, TypeError, ValueError):
                         continue
             except Exception as exc:
@@ -142,8 +146,14 @@ class LiveState:
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 600)
 
-    def update(self, a: dict):
-        """One message of the KORDIS stream (its "attributes")."""
+    def source(self):
+        """Where positions come from now: "stream", "gtfs-rt" (fallback while the stream is silent) or None."""
+        if time.time() - self.stream_heard < STREAM_SILENT_S:
+            return "stream"
+        return "gtfs-rt" if self.estimate and self.rt_fetched and time.time() - self.rt_fetched < 3 * RT_POLL_S else None
+
+    def update(self, a: dict, estimated: bool = False):
+        """One message of the KORDIS stream (its "attributes"); ``estimated``: built from GTFS Realtime."""
         try:
             vid, ms = int(a["ID"]), int(a["TimeUpdated"])
             lat, lon = float(a["Lat"]), float(a["Lng"])
@@ -166,6 +176,7 @@ class LiveState:
                 delay=None if delay is None else float(delay), bearing=a.get("Bearing"),
                 lf=str(a.get("LF")).lower() == "true", inactive=str(a.get("IsInactive")).lower() == "true",
                 last_stop=a.get("LastStopID"), final_stop=a.get("FinalStopID"), vtype=a.get("VType"),
+                estimated=estimated,
             )
             v["trail"].append((ms, round(lat, 6), round(lon, 6), v["delay"]))
             if self.received % 5000 == 0:
@@ -202,11 +213,14 @@ class LiveState:
             time.sleep(RT_POLL_S)
 
     def poll_rt(self):
-        """Download GTFS Realtime once: the trip of each vehicle and the service alerts per line."""
+        """Download GTFS Realtime once: the trip of each vehicle and the service alerts per line.
+
+        While the vehicle stream is silent, its positions also stand in for the stream's,
+        with the delay estimated from the timetable (``self.estimate``)."""
         from google.transit import gtfs_realtime_pb2
         feed = gtfs_realtime_pb2.FeedMessage()
         feed.ParseFromString(_get(GTFS_RT_URL))
-        trips, alerts = {}, {}
+        trips, alerts, positions = {}, {}, []
         for e in feed.entity:
             if e.HasField("vehicle"):
                 v = e.vehicle
@@ -216,6 +230,8 @@ class LiveState:
                     continue
                 if v.trip.trip_id:
                     trips[vid] = (v.trip.trip_id, v.stop_id, v.current_status)
+                    if v.HasField("position") and v.timestamp:
+                        positions.append((vid, v))
             elif e.HasField("alert"):
                 a = e.alert
                 item = {
@@ -230,6 +246,25 @@ class LiveState:
         with self.lock:
             self.trips, self.alerts = trips, alerts
             self.rt_fetched = time.time()
+        if self.estimate and time.time() - self.stream_heard >= STREAM_SILENT_S:
+            self._positions_from_rt(positions)
+
+    def _positions_from_rt(self, positions):
+        """Feed GTFS Realtime positions in as if they were stream messages (fallback)."""
+        for vid, v in positions:
+            try:
+                est = self.estimate(v.trip.trip_id, v.stop_id, v.current_status,
+                                    v.position.latitude, v.position.longitude, v.timestamp)
+            except Exception:
+                est = None
+            if est is None:
+                continue
+            self.update({
+                "ID": vid, "TimeUpdated": v.timestamp * 1000, "Lat": v.position.latitude, "Lng": v.position.longitude,
+                "LineID": est["line"], "Delay": est["delay"],
+                "Bearing": round(v.position.bearing) if v.position.HasField("bearing") else None,
+                "LastStopID": est["last_stop"], "FinalStopID": est["final_stop"],
+            }, estimated=True)
 
     def trip_of(self, vid: int):
         """(trip_id, stop_id, stop status) of the trip a vehicle runs, or None."""
