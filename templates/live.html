@@ -93,13 +93,14 @@
 
   @media (max-width: 760px) {
     #app { flex-direction:column-reverse; }
-    #side { width:100%; height:48%; border-right:none; border-top:1px solid var(--line); }
+    #side { width:100%; height:48%; border-right:none; border-top:1px solid var(--line); padding-bottom:env(safe-area-inset-bottom); }
     #map { flex:1; min-height:0; }
     header { padding:8px 12px; }
     header h1 { font-size:15px; }
     .tiles, .controls, .legend { padding-left:12px; padding-right:12px; }
   }
 </style>
+{% include "_pwa.html" %}
 {% include "_analytics.html" %}
 </head>
 <body>
@@ -107,7 +108,7 @@
   <aside id="side">
     <header>
       <h1>Živá mapa MHD</h1>
-      <div class="links"><a href="/">← Mapa sítě a jízdní řád</a><a href="/o-aplikaci">O aplikaci</a></div>
+      <div class="links"><a href="/">← Mapa sítě a jízdní řád</a><a href="/o-aplikaci">O aplikaci</a><a href="/o-aplikaci#plocha" data-install hidden>Přidat na plochu</a></div>
       <div id="status"><i class="dot"></i><span>Připojuji…</span></div>
     </header>
     {% if not enabled %}

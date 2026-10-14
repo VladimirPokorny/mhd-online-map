@@ -80,6 +80,7 @@
     .btn { padding:8px 12px; font-size:14px; }
   }
 </style>
+{% include "_pwa.html" %}
 {% include "_analytics.html" %}
 </head>
 <body>
@@ -183,6 +184,17 @@
     <div>
       <h3>Na mobilu</h3>
       <p>Mapa zabírá celou obrazovku. Vyhledávání, seznam linek a mapu dostupnosti otevřete tlačítkem <span class="ui">☰ Menu</span>, graf a výběr dne šipkou <span class="ui">▴</span> u časové osy.</p>
+    </div>
+
+    <div id="plocha">
+      <h3>Přidat na plochu telefonu</h3>
+      <p>Aplikaci si můžete dát na plochu jako ikonu. Otevře se rovnou živá mapa, na celou obrazovku a bez lišty prohlížeče.</p>
+      <p><a class="btn" href="#plocha" data-install hidden>Přidat na plochu</a></p>
+      <ul>
+        <li><strong>Android (Chrome):</strong> klepněte na <span class="ui">Přidat na plochu</span> v aplikaci, nebo v nabídce prohlížeče <span class="ui">⋮</span> zvolte <span class="ui">Přidat na plochu</span> / <span class="ui">Instalovat aplikaci</span>.</li>
+        <li><strong>iPhone a iPad (Safari):</strong> klepněte na tlačítko <span class="ui">Sdílet</span> (čtverec se šipkou) a zvolte <span class="ui">Přidat na plochu</span>.</li>
+      </ul>
+      <p>Podržením prstu na ikoně (Android) otevřete rovnou i mapu sítě.</p>
     </div>
 
     <div>

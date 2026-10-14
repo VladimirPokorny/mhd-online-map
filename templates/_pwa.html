@@ -1,0 +1,36 @@
+{# Home-screen app: manifest, icons, service worker and the "Přidat na plochu" link.
+   Elements with data-install stay hidden until the device can actually install the app. #}
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#00224b">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="MHD JMK">
+<style>[data-install][hidden] { display:none !important; }</style>
+<script>
+if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+(() => {
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const links = () => document.querySelectorAll("[data-install]");
+  const show = on => links().forEach(el => { el.hidden = !on; });
+  let prompt = null;
+  // Android / Chrome / Edge: the browser offers installation; keep it for our own link.
+  addEventListener("beforeinstallprompt", e => { e.preventDefault(); prompt = e; show(true); });
+  addEventListener("appinstalled", () => { prompt = null; show(false); });
+  // iPhone / iPad: no prompt exists, the link leads to the how-to on the About page.
+  if (ios && !standalone) document.addEventListener("DOMContentLoaded", () => show(true));
+  document.addEventListener("click", async e => {
+    const el = e.target.closest("[data-install]");
+    if (!el) return;
+    if (prompt) {
+      e.preventDefault();
+      prompt.prompt();
+      await prompt.userChoice;
+      prompt = null;
+      show(false);
+    }  // otherwise the link's own href (the how-to) opens
+  });
+})();
+</script>

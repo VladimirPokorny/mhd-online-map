@@ -74,6 +74,15 @@ The address keeps the line, the vehicle and the position: `/zive?linka=1&vuz=172
 
 Both maps have a location button (below the zoom buttons). After the browser asks for permission, it shows a blue dot with the accuracy circle, centres the map on it the first time and follows the device as it moves. Pressing it again after panning away brings the map back; pressing it while centred turns it off. The position stays in the browser; nothing is sent to the server. Browsers allow this only on HTTPS (and on `localhost`).
 
+### On the home screen
+
+The app can be added to a phone's home screen. It then opens the live map full-screen, without the browser bar; a long press on the icon (Android) also offers the network map.
+
+- **Android (Chrome, Edge):** the *Přidat na plochu* link (in the sidebar and on the About page) opens the browser's install dialog; it only appears when the browser offers installation. The browser menu works too.
+- **iPhone and iPad (Safari):** *Sdílet* → *Přidat na plochu*. The same link leads to these instructions on the About page.
+
+It is a web app (PWA): a manifest (`/manifest.webmanifest`), icons (`static/icons/`), and a small service worker (`/sw.js`) that shows a *Jste bez připojení* page when there is no connection. It caches nothing else: the map and live data always come from the network. Installing needs HTTPS (or `localhost`).
+
 ### Links to a specific view
 
 The address can be bookmarked or shared:
@@ -317,6 +326,8 @@ python app.py --update --build-only
 | `live.py` | live state of the vehicles: vehicle stream, GTFS Realtime (trips, alerts), car traffic and closures |
 | `templates/live.html` | the live map |
 | `templates/_locate.html` | the "my location" button, included in both maps |
+| `templates/_pwa.html` | home-screen app: manifest link, icons, service worker, install link |
+| `static/sw.js`, `static/icons/` | service worker and app icons |
 | `templates/about.html` | the about / help page for users |
 | `GTFS/` | optional bundled timetable (fallback) |
 | `osm_cache/` | downloaded OSM and OSRM data |
@@ -334,6 +345,7 @@ python app.py --update --build-only
 | `GET /api/vehicles?date=YYYY-MM-DD&time=<seconds since midnight>` | vehicles at a given moment |
 | `GET /api/reach?date=…&time=…&stop=<stop index>&minutes=60` | reachability map |
 | `GET /healthz` | health status, data version and source information |
+| `GET /manifest.webmanifest`, `GET /sw.js`, `GET /offline` | home-screen app: manifest, service worker, offline page |
 | `GET /zive` | live map (Czech) |
 | `GET /api/live/meta` | line names and colours by KORDIS `LineID` |
 | `GET /api/live/vehicles` | every vehicle heard from in the last 30 min: `[number, LineID, lat, lon, delay (min), bearing, age (s), inactive, low-floor, destination, course]` |

@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, render_template, request
+from flask import Flask, abort, jsonify, render_template, request, send_from_directory
 
 from gtfs_loader import load_network
 from gtfs_update import DEFAULT_URL, FeedStore
@@ -164,6 +164,51 @@ def about():
         published=published,
         auto_update=bool(store and store.url),
     )
+
+
+# ------------------------------------------------------- home-screen app ---
+
+@app.route("/manifest.webmanifest")
+def manifest():
+    """Web app manifest: lets phones add the app to the home screen. It opens the live map."""
+    start = "/zive" if live is not None else "/"
+    response = jsonify({
+        "name": "MHD Brno a JMK – živá mapa",
+        "short_name": "MHD JMK",
+        "description": "Kde právě jsou vozidla IDS JMK a jaké mají zpoždění, mapa sítě a jízdní řád.",
+        "lang": "cs",
+        "id": "/",
+        "start_url": start,
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#00224b",
+        "icons": [
+            {"src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+            {"src": "/static/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+        ],
+        "shortcuts": ([{"name": "Živá mapa", "url": "/zive", "icons": [{"src": "/static/icons/icon-192.png", "sizes": "192x192"}]}]
+                      if live is not None else []) + [
+            {"name": "Mapa sítě a jízdní řád", "short_name": "Mapa sítě", "url": "/",
+             "icons": [{"src": "/static/icons/icon-192.png", "sizes": "192x192"}]},
+        ],
+    })
+    response.mimetype = "application/manifest+json"
+    return response
+
+
+@app.route("/sw.js")
+def service_worker():
+    # Served from the root so that it may handle every page of the app.
+    response = send_from_directory(BASE_DIR / "static", "sw.js", mimetype="text/javascript", max_age=0)
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.route("/offline")
+def offline():
+    return render_template("offline.html")
 
 
 @app.route("/api/network")

@@ -8,6 +8,7 @@ __pycache__/
 network_cache.json
 GTFS/*.log
 *.png
+!static/icons/*.png
 
 GTFS/*
 feeds/

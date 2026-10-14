@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY *.py ./
 COPY templates/ templates/
+COPY static/ static/
 # Downloaded OpenStreetMap / OSRM data. With it the track geometry is computed
 # in seconds; without it everything is downloaded again (several minutes).
 COPY osm_cache/ data/osm_cache/
