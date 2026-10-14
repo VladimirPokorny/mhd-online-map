@@ -278,7 +278,8 @@ git push -u origin main
 
 1. **Create Service → Compose**, same repository, Compose Path `./docker-compose.yml`.
 2. Under **Domains**, choose the `idsjmk-map` service and port `8000`.
-3. Optionally set the `UMAMI_*` variables (see `.env.example`) under **Environment**; the compose file passes them to the container.
+3. Under **Environment**, set `POSTGRES_PASSWORD` (required, letters and digits). The compose file also runs the history collector and its PostgreSQL database (see *9. History collector*).
+4. Optionally set the `UMAMI_*` variables (see `.env.example`) under **Environment**; the compose file passes them to the container.
 
 ### After deploying
 
@@ -325,6 +326,9 @@ python app.py --update --build-only
 | `reach.py` | reachability map (Connection Scan, travel-time grid) |
 | `templates/index.html` | the whole web interface (Leaflet) |
 | `live.py` | live state of the vehicles: vehicle stream, GTFS Realtime (trips, alerts), car traffic and closures |
+| `collector/` | history collector: polls data.brno.cz, KORDIS and Open-Meteo and stores everything in PostgreSQL (`python -m collector`) |
+| `collector/migrations/` | the database schema as numbered SQL files, applied in order at start |
+| `collector/jobs/` | one module per group of sources (parking, counters, weather, KORDIS, …) |
 | `templates/live.html` | the live map |
 | `templates/_locate.html` | the "my location" button, included in both maps |
 | `templates/_pwa.html` | home-screen app: manifest link, icons, service worker, install link |
@@ -367,3 +371,62 @@ All endpoints except `/api/network` accept a `v=<version>` parameter. If the ser
 - **Timetable download** is one conditional request every 6 hours. The full file (8 MB) is downloaded only when it has changed.
 - **The live map** keeps one WebSocket connection to gis.brno.cz open, loads the ~220 kB GTFS Realtime feed every 30 seconds and about 0.9 MB from dopravniinfo.cz every 2 minutes, however many people use it. Browsers get the vehicles from this server every 10 seconds (~30 kB gzipped).
 - **Timetable data:** KORDIS JMK, DPMB. **Map data:** © OpenStreetMap contributors (ODbL license). **Car traffic and closures:** Národní dopravní informační centrum (ŘSD), dopravniinfo.cz.
+
+---
+
+## 9. History collector (PostgreSQL)
+
+Most live sources on data.brno.cz publish only the current state: free spaces in a car park now, people in a swimming pool now, the last hour of a bike counter. The KORDIS archive of vehicle positions keeps only 7 days. Statistics and predictions need history, so the collector polls these sources on a schedule and keeps everything in PostgreSQL. It runs as its own service (`collector` in `docker-compose.yml`), next to the web app, which does not use the database yet.
+
+### What it stores
+
+| Job | Source | Every | Table(s) |
+|---|---|---|---|
+| `parking` | car parks and P+R, free spaces (data.brno.cz) | 5 min | `parking_lot`, `parking_observation` |
+| `venues` | STAREZ pools, ice rinks, wellness: people inside now and today | 5 min | `venue_occupancy` |
+| `temperatures` | air temperature at 12 Teplárny Brno sites | 10 min | `temperature_station`, `temperature_observation` |
+| `bikes_live` | counting cameras, last full hour, cyclists and pedestrians per direction | 15 min | `bike_station`, `bike_count` (source `live`) |
+| `bikes_history` | the cameras' full hourly history since 2020 | 30 min | `bike_count` (source `history`) |
+| `tsb_counts` | Technické sítě Brno counting sensors (dam, Riviéra, …) since 2023 | 30 min | `tsb_count` |
+| `weather` | Open-Meteo for Brno: recent hours, the forecast as issued, reanalysis since 2020 | 1 h | `weather_hour`, `weather_forecast` |
+| `diversions` | IDS JMK diversions, closures and moved stops | 1 h | `ids_diversion` |
+| `water` | water supply outages (BVK) | 1 h | `water_outage` |
+| `events` | cultural events (GoToBrno) | 6 h | `city_event` |
+| `kordis_archive` | KORDIS 7-day archive of vehicle positions (daily Parquet files) | 3 h | `vehicle_sample`, `vehicle_day` |
+| `kordis_stream` | KORDIS live vehicle stream (WebSocket) | continuous | `vehicle_sample`, `vehicle_day` |
+
+**Vehicle delays.** The KORDIS archive has a sample of every vehicle every 30 seconds, about 1.8 million a weekday. The collector keeps a sample only when a vehicle's line, course, last stop or delay changes. That is about 27 % of the samples, and nothing about delays and stop passages is lost, because between those samples the vehicle only moves along its route. A weekday takes about 45 MB in PostgreSQL, around 14 GB a year. `vehicle_sample` is partitioned by month, so old months can be detached or dropped. The archive is uploaded irregularly and often cut short, so the live stream is recorded as well. When a day arrives in the archive, it replaces what the stream recorded for that day (`vehicle_day.source`: 1 = stream, may have gaps; 2 = archive, complete). With `KORDIS_RAW_DIR` set, the archive's daily Parquet files with every sample (~13 MB a day) are kept too.
+
+**Backfills.** On the first start the collector also fetches the history the sources have: the bike counters since 2020 (1.2 million rows), the TSB sensors since 2023 and the weather since 2020. It works in batches with short pauses and finishes in about 15 minutes.
+
+### Robustness
+
+- **Idempotent writes.** Each run stores its data and its cursor (last object id, ETag) in one transaction. Re-running a job, or restarting the collector mid-run, adds nothing twice, and a backfill resumes where it stopped.
+- **Failures.** HTTP requests have timeouts and are retried with backoff (network errors, 429, 5xx). A failed job is retried after 1, 2, 4… minutes, up to its normal interval, and other jobs are not affected; each job runs in its own thread.
+- **One instance.** The collector holds a PostgreSQL advisory lock. A second instance waits instead of writing the same data twice. If the database connection is lost, the collector exits with code 1, Docker restarts it, and it waits until the database is back. Samples from the stream stay in memory while the database is unreachable (up to about 2 hours).
+- **Silent sources.** The KORDIS stream can stay connected and send nothing; after 2 minutes of silence the collector reconnects. Every run records the newest timestamp in the source data, so a source that stops updating is visible.
+- **Schema.** `collector/migrations/*.sql` are applied in order at start (table `schema_migration`). A schema change is a new numbered file.
+
+### Running and monitoring
+
+```bash
+export DATABASE_URL=postgresql://brno:secret@localhost:5432/brno
+python -m collector run            # all jobs, continuously
+python -m collector once parking   # one job once (all except the stream if none named)
+python -m collector status         # last run of every job: rows, newest source data, errors since the last success
+python -m collector health         # exit 1 when a job has not succeeded for 3 intervals (container health check)
+python -m collector migrate        # create or update the schema only
+```
+
+Every run is logged in the `collector_run` table: job, start, end, success, rows, a note or the error, and the newest source time. `health` also prints warnings for sources whose data are older than expected (for example the STAREZ layer, unchanged since 10 October 2026). Those are the publisher's problem, so they do not make the container unhealthy.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATABASE_URL` | *(required)* | PostgreSQL connection string; compose builds it from `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` |
+| `COLLECTOR_DISABLE` | *(empty)* | jobs to switch off, comma-separated |
+| `COLLECTOR_INTERVAL_<JOB>` | per job | seconds between runs of a job, e.g. `COLLECTOR_INTERVAL_PARKING=600` |
+| `KORDIS_RAW_DIR` | *(empty)* | keep the KORDIS archive's daily Parquet files in this folder (in compose, `/app/raw` is a volume) |
+
+**Backups.** The data cannot be downloaded again once the sources have moved on. Back up the database regularly, for example `docker compose exec db pg_dump -U brno -Fc brno > brno-$(date +%F).dump`, or with Dokploy's database backups.
+
+**Sources and licences.** data.brno.cz (Statutární město Brno, CC BY), KORDIS JMK, Brněnské vodárny a kanalizace, TIC Brno, Technické sítě Brno, Teplárny Brno, Open-Meteo (CC BY 4.0). Anyone publishing data derived from the collected history must credit these sources.

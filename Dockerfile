@@ -12,6 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY *.py ./
+COPY collector/ collector/
 COPY templates/ templates/
 COPY static/ static/
 # Downloaded OpenStreetMap / OSRM data. With it the track geometry is computed
@@ -23,7 +24,7 @@ COPY osm_cache/ data/osm_cache/
 # A bundled GTFS/ folder is optional (it is excluded by .dockerignore).
 RUN python app.py --update --build-only
 
-RUN useradd --system --create-home --uid 10001 app && chown -R app /app/data
+RUN useradd --system --create-home --uid 10001 app && mkdir -p /app/raw && chown -R app /app/data /app/raw
 USER app
 
 EXPOSE 8000

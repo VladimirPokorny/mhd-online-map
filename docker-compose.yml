@@ -22,5 +22,48 @@ services:
     expose:
       - "8000"
 
+  # History of Brno open data (parking, counters, weather, KORDIS delays, …) for statistics and predictions.
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-brno}
+      - POSTGRES_USER=${POSTGRES_USER:-brno}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (see .env.example)}
+    volumes:
+      - brno-pgdata:/var/lib/postgresql/data
+    # Not published outside the compose network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    shm_size: 256mb
+
+  collector:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "collector", "run"]
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-brno}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-brno}
+      - COLLECTOR_DISABLE=${COLLECTOR_DISABLE:-}
+      - KORDIS_RAW_DIR=${KORDIS_RAW_DIR:-}
+    volumes:
+      - collector-raw:/app/raw
+    depends_on:
+      db:
+        condition: service_healthy
+    # Overrides the web app's health check of the image.
+    healthcheck:
+      test: ["CMD", "python", "-m", "collector", "health"]
+      interval: 5m
+      timeout: 60s
+      start_period: 15m
+      retries: 2
+    # Jobs finish their current step on SIGTERM; the stream writes its buffer.
+    stop_grace_period: 60s
+
 volumes:
   idsjmk-data:
+  brno-pgdata:
+  collector-raw:
