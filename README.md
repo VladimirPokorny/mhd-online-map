@@ -70,6 +70,10 @@ Linked from the map's sidebar (*„Živá mapa se zpožděním“*). It shows th
 
 The address keeps the line, the vehicle and the position: `/zive?linka=1&vuz=1720#15/49.2/16.6`.
 
+### My location
+
+Both maps have a location button (below the zoom buttons). After the browser asks for permission, it shows a blue dot with the accuracy circle, centres the map on it the first time and follows the device as it moves. Pressing it again after panning away brings the map back; pressing it while centred turns it off. The position stays in the browser; nothing is sent to the server. Browsers allow this only on HTTPS (and on `localhost`).
+
 ### Links to a specific view
 
 The address can be bookmarked or shared:
@@ -312,6 +316,7 @@ python app.py --update --build-only
 | `templates/index.html` | the whole web interface (Leaflet) |
 | `live.py` | live state of the vehicles: vehicle stream, GTFS Realtime (trips, alerts), car traffic and closures |
 | `templates/live.html` | the live map |
+| `templates/_locate.html` | the "my location" button, included in both maps |
 | `templates/about.html` | the about / help page for users |
 | `GTFS/` | optional bundled timetable (fallback) |
 | `osm_cache/` | downloaded OSM and OSRM data |

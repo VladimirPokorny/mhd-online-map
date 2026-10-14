@@ -1,0 +1,106 @@
+{# "Show my location" button for a Leaflet map: include after leaflet.js, then call addLocateControl(map).
+   The position comes from the browser (it asks the user first) and never leaves the device. #}
+<style>
+  .locate-btn { width:34px; height:34px; display:flex; align-items:center; justify-content:center; background:#fff; border:none;
+    cursor:pointer; color:#1d2433; padding:0; }
+  .locate-btn:hover { background:#f4f4f4; }
+  .locate-btn svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; }
+  .locate-btn.on { color:#2a78d6; }
+  .locate-btn.on svg circle.c { fill:currentColor; }
+  .locate-btn.busy svg { animation:locate-spin 1.2s linear infinite; }
+  @keyframes locate-spin { to { transform:rotate(360deg); } }
+  .locate-msg { position:absolute; left:50%; bottom:24px; transform:translateX(-50%); z-index:1200; max-width:min(90%, 420px);
+    background:#1d2433; color:#fff; font:13px/1.4 system-ui, sans-serif; padding:8px 12px; border-radius:8px;
+    box-shadow:0 2px 10px rgba(0,0,0,.3); }
+</style>
+<script>
+function addLocateControl(map) {
+  const BLUE = "#2a78d6";
+  let watching = false, located = false, marker = null, accuracy = null, msgTimer = null;
+
+  const Control = L.Control.extend({
+    onAdd() {
+      const box = L.DomUtil.create("div", "leaflet-bar leaflet-control");
+      const btn = L.DomUtil.create("button", "locate-btn", box);
+      btn.type = "button";
+      btn.title = "Moje poloha";
+      btn.setAttribute("aria-label", "Zobrazit moji polohu");
+      btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle class="c" cx="12" cy="12" r="2.5"/>
+        <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>`;
+      L.DomEvent.disableClickPropagation(box);
+      L.DomEvent.on(btn, "click", onClick);
+      this.btn = btn;
+      return box;
+    },
+  });
+  const control = new Control({ position: map.zoomControl ? map.zoomControl.getPosition() : "topleft" }).addTo(map);
+  const btn = control.btn;
+
+  function message(text) {
+    let el = map.getContainer().querySelector(".locate-msg");
+    if (!el) {
+      el = L.DomUtil.create("div", "locate-msg", map.getContainer());
+      L.DomEvent.disableClickPropagation(el);
+    }
+    el.textContent = text;
+    clearTimeout(msgTimer);
+    msgTimer = setTimeout(() => el.remove(), 6000);
+  }
+
+  function onClick() {
+    if (!watching) return start();
+    // On: the first press after panning away brings the map back, the next one stops.
+    if (marker && !map.getBounds().pad(-0.2).contains(marker.getLatLng())) {
+      map.setView(marker.getLatLng(), Math.max(map.getZoom(), 16));
+    } else {
+      stop();
+    }
+  }
+
+  function start() {
+    if (!("geolocation" in navigator)) return message("Tento prohlížeč neumí zjistit polohu.");
+    if (!window.isSecureContext) return message("Poloha funguje jen na zabezpečené adrese (https).");
+    watching = true;
+    located = false;
+    btn.classList.add("busy");
+    map.locate({ watch: true, setView: false, enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 });
+  }
+
+  function stop() {
+    watching = false;
+    map.stopLocate();
+    btn.classList.remove("on", "busy");
+    if (marker) { marker.remove(); marker = null; }
+    if (accuracy) { accuracy.remove(); accuracy = null; }
+  }
+
+  map.on("locationfound", e => {
+    if (!watching) return;
+    btn.classList.remove("busy");
+    btn.classList.add("on");
+    const tip = `Vaše poloha (přesnost ± ${Math.round(e.accuracy)} m)`;
+    if (!marker) {
+      accuracy = L.circle(e.latlng, { radius: e.accuracy, color: BLUE, weight: 1, opacity: 0.4, fillColor: BLUE, fillOpacity: 0.12, interactive: false }).addTo(map);
+      marker = L.circleMarker(e.latlng, { radius: 7, color: "#fff", weight: 3, fillColor: BLUE, fillOpacity: 1 }).bindTooltip(tip).addTo(map);
+    } else {
+      marker.setLatLng(e.latlng).setTooltipContent(tip);
+      accuracy.setLatLng(e.latlng).setRadius(e.accuracy);
+    }
+    marker.bringToFront();
+    if (!located) {
+      located = true;
+      map.setView(e.latlng, Math.max(map.getZoom(), 16));
+    }
+  });
+
+  map.on("locationerror", e => {
+    if (!watching) return;
+    // A timeout while already located just means no new fix yet; keep watching.
+    if (located && e.code === 3) return;
+    stop();
+    message(e.code === 1 ? "Přístup k poloze je zakázaný. Povolte ho v nastavení prohlížeče pro tuto stránku."
+      : e.code === 3 ? "Polohu se nepodařilo zjistit včas. Zkuste to znovu."
+      : "Polohu se nepodařilo zjistit.");
+  });
+}
+</script>

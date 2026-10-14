@@ -222,6 +222,7 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+{% include "_locate.html" %}
 <script>
 const TYPE_ORDER = ["Tram", "Trolleybus", "Bus", "Train", "Ferry"];
 const STOP_ZOOM = 14;
@@ -882,6 +883,7 @@ setTimelineCollapsed(storedCollapsed === null ? isMobile() : storedCollapsed ===
 // Keep Leaflet in sync when the timeline or the window changes size.
 new ResizeObserver(() => map.invalidateSize()).observe($("map"));
 if (isMobile()) map.zoomControl.setPosition("topright");
+addLocateControl(map);
 
 fetch("/api/network").then(r => r.json()).then(async net => {
   NET = net;
