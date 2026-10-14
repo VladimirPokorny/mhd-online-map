@@ -31,13 +31,16 @@ NO_DATA = 255
 
 
 def _merc(lat, lon):
+    """Web Mercator (EPSG:3857) metres of lat/lon arrays."""
     x = EARTH_R * np.radians(lon)
     y = EARTH_R * np.log(np.tan(np.pi / 4 + np.radians(lat) / 2))
     return x, y
 
 
 class Reachability:
+    """Index for reachability queries: footpaths, sorted connections and the region grid."""
     def __init__(self, gtfs_dir: Path, network: dict, timetable: Timetable):
+        """Precompute footpaths, the connection order and the travel-time grid over the network area."""
         self.tt = timetable
         self.stops = network["stops"]
         lat = np.array([s["lat"] for s in self.stops])
@@ -114,6 +117,7 @@ class Reachability:
         return dep[k], arr[k], tt.seg_from[sel][k], tt.seg_next[sel][k], trip[k]
 
     def query(self, d, t, stop, budget_s):
+        """Earliest arrivals from ``stop`` (and stops of the same name) leaving at second ``t`` of day ``d``."""
         tt = self.tt
         n_trips = len(tt.trip_route)
         origins = self.by_name.get(self.stops[stop]["name"], [stop])
@@ -128,6 +132,7 @@ class Reachability:
         rides = np.zeros(n, int)  # vehicles used; breaks ties between equally fast journeys
 
         def walk_from(s, ts):
+            """Relax the footpaths from stop ``s`` reached at time ``ts``."""
             for m, w in self.foot.get(s, ()):
                 ta = ts + w
                 if ta <= end and (ta < arr[m] or (ta == arr[m] and rides[s] < rides[m])):

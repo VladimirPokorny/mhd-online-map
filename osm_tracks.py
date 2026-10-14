@@ -36,6 +36,7 @@ MAX_SNAP_M = 400         # max stop -> rail node distance for rail routing
 # ---------------------------------------------------------------- geometry ---
 
 def _dist_m(a, b):
+    """Approximate distance in metres between two (lat, lon) points."""
     lat = math.radians((a[0] + b[0]) / 2)
     dx = (b[1] - a[1]) * 111_320 * math.cos(lat)
     dy = (b[0] - a[0]) * 110_540
@@ -43,6 +44,7 @@ def _dist_m(a, b):
 
 
 def _point_segment_m(p, a, b):
+    """Approximate distance in metres from point ``p`` to the segment ``a``–``b``."""
     k = math.cos(math.radians(p[0]))
     ax, ay = (a[1] - p[1]) * 111_320 * k, (a[0] - p[0]) * 110_540
     bx, by = (b[1] - p[1]) * 111_320 * k, (b[0] - p[0]) * 110_540
@@ -78,6 +80,7 @@ class SegmentGrid:
     CELL = 0.005
 
     def __init__(self, lines):
+        """Index every segment of ``lines`` in the cells its bounding box touches."""
         self.cells = defaultdict(list)
         for line in lines:
             for a, b in zip(line, line[1:]):
@@ -86,6 +89,7 @@ class SegmentGrid:
                         self.cells[(cx, cy)].append((a, b))
 
     def near(self, p, limit_m):
+        """Whether any segment lies within ``limit_m`` metres of point ``p``."""
         cx, cy = int(p[1] / self.CELL), int(p[0] / self.CELL)
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
@@ -98,6 +102,7 @@ class SegmentGrid:
 # ---------------------------------------------------------------- downloads ---
 
 def _cached_fetch(cache_dir: Path, key: str, fetch):
+    """Return cached JSON for ``key``, or call ``fetch`` and cache its result."""
     path = cache_dir / (hashlib.sha1(key.encode()).hexdigest()[:16] + ".json")
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))
@@ -107,13 +112,16 @@ def _cached_fetch(cache_dir: Path, key: str, fetch):
 
 
 def _http_json(url, data=None, timeout=600):
+    """GET (or POST with ``data``) a URL and parse the JSON response."""
     req = urllib.request.Request(url, data=data, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
 def _overpass(cache_dir, query):
+    """Run an Overpass query, retrying when the server is busy; results are cached."""
     def fetch():
+        """POST the query to Overpass, retrying up to 4 times."""
         for attempt in range(4):
             try:
                 body = urllib.parse.urlencode({"data": query}).encode()
@@ -139,6 +147,7 @@ def _bbox(points, margin=0.05, snap=0.25):
 # ------------------------------------------------------------- OSM relations ---
 
 def _fetch_relations(cache_dir, bbox):
+    """Download the IDS JMK route relations: way geometry and (mode, ref) → sets of way ids."""
     print("  downloading IDS JMK route relations from OpenStreetMap (Overpass)...")
     q = (
         "[out:json][timeout:600];"
@@ -179,6 +188,7 @@ def _covering_patterns(patterns):
 
 
 def _osrm_route(cache_dir, pattern):
+    """Road route through a stop pattern from OSRM (in chunks), or None if it fails."""
     lines = []
     for start in range(0, len(pattern) - 1, 90):  # keep well under OSRM waypoint limit
         chunk = pattern[start:start + 91]
@@ -186,6 +196,7 @@ def _osrm_route(cache_dir, pattern):
         url = f"{OSRM_URL}{coords}?overview=full&geometries=geojson"
 
         def fetch():
+            """Ask the public OSRM server for the route of this chunk."""
             time.sleep(1)  # be polite to the public demo server
             return _http_json(url, timeout=60)
         data = _cached_fetch(cache_dir, url, fetch)
@@ -201,6 +212,7 @@ class TrackGraph:
     CELL = 0.01
 
     def __init__(self, polylines, densify_m=None, link_m=None):
+        """Build the graph; ``densify_m`` adds intermediate nodes, ``link_m`` joins parallel tracks."""
         self.adj = defaultdict(list)
         for pts in polylines:
             if densify_m:
@@ -237,6 +249,7 @@ class TrackGraph:
                             self.adj[m].append((n, d * 3 + 20))
 
     def nearest(self, p, max_m=MAX_SNAP_M):
+        """The graph node closest to ``p`` within ``max_m`` metres, or None."""
         cy, cx = int(p[0] / self.CELL), int(p[1] / self.CELL)
         cands = [n for dy in (-1, 0, 1) for dx in (-1, 0, 1) for n in self.grid.get((cy + dy, cx + dx), ())]
         best = min(cands, key=lambda n: _dist_m(p, n), default=None)
@@ -271,6 +284,7 @@ class TrackGraph:
         return None
 
     def route(self, pattern):
+        """Path through a stop pattern: (points, True if every leg was on the track), or None."""
         nodes = [self.nearest(p) for p in pattern]
         if sum(n is not None for n in nodes) < 2:
             return None
@@ -285,6 +299,7 @@ class TrackGraph:
 
 
 def _densify(points, step_m):
+    """Add points so that no two consecutive points are more than ``step_m`` metres apart."""
     out = [points[0]]
     for a, b in zip(points, points[1:]):
         n = int(_dist_m(a, b) // step_m)
@@ -296,6 +311,7 @@ def _densify(points, step_m):
 
 
 def _rail_graph(cache_dir, mode, bbox):
+    """Download the tram or train tracks in ``bbox`` and build a routing graph."""
     print(f"  downloading {mode} tracks for routing ({bbox})...")
     q = (
         "[out:json][timeout:600];"
@@ -351,6 +367,7 @@ def build_tracks(lines, cache_dir: Path):
     junctions = {p for p, n in node_use.items() if n > 1}
 
     def add_way(key, points):
+        """Index of a way in the output list, adding it (simplified) on first use."""
         if key not in way_index:
             way_index[key] = len(ways)
             ways.append(simplify(points, fixed=junctions))

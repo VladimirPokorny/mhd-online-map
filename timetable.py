@@ -16,15 +16,18 @@ DAY = 86_400
 
 
 def _seconds(series: pd.Series) -> np.ndarray:
+    """GTFS times (HH:MM:SS, hours may exceed 24) as seconds since midnight."""
     parts = series.str.split(":", expand=True).astype(int)
     return (parts[0] * 3600 + parts[1] * 60 + parts[2]).to_numpy(np.int32)
 
 
 def _parse_date(s: str) -> date:
+    """A GTFS date (YYYYMMDD) as a date."""
     return date(int(s[:4]), int(s[4:6]), int(s[6:8]))
 
 
 def _easter(year: int) -> date:
+    """Easter Sunday of ``year`` (Gregorian calendar, anonymous algorithm)."""
     a, b, c = year % 19, year // 100, year % 100
     d, e = b // 4, b % 4
     g = (8 * b + 13) // 25
@@ -38,6 +41,7 @@ def _easter(year: int) -> date:
 
 
 def czech_holidays(year: int) -> dict:
+    """Czech public holidays of ``year``: date → name."""
     fixed = {
         (1, 1): "Den obnovy samostatného českého státu", (5, 1): "Svátek práce",
         (5, 8): "Den vítězství", (7, 5): "Den slovanských věrozvěstů Cyrila a Metoděje",
@@ -59,6 +63,7 @@ class _PolyLine:
     __slots__ = ("pts", "cum")
 
     def __init__(self, pts):
+        """Store the points and their cumulative lengths (scaled degrees)."""
         self.pts = pts
         cum = [0.0]
         for a, b in zip(pts, pts[1:]):
@@ -67,6 +72,7 @@ class _PolyLine:
         self.cum = cum
 
     def at(self, f):
+        """Point at fraction ``f`` (0–1) of the polyline's length."""
         total = self.cum[-1]
         if total == 0:
             return self.pts[0]
@@ -79,7 +85,9 @@ class _PolyLine:
 
 
 class Timetable:
+    """All trips of a GTFS feed as NumPy arrays, for fast queries of vehicles at a moment."""
     def __init__(self, gtfs_dir: Path, network: dict, segments: dict):
+        """Read calendar, trips and stop times into arrays of moving segments and dwells."""
         read = lambda name, **kw: pd.read_csv(gtfs_dir / f"{name}.txt", encoding="utf-8-sig", **kw)
         route_idx = {r["id"]: i for i, r in enumerate(network["routes"])}
         self.route_type = [r["type"] for r in network["routes"]]
@@ -166,6 +174,7 @@ class Timetable:
     # ----------------------------------------------------------- calendar ---
 
     def services_on(self, d: date) -> np.ndarray:
+        """Boolean array: which services run on day ``d`` (calendar plus exceptions; cached)."""
         if d not in self._active_cache:
             active = np.zeros(len(self.service_codes), bool)
             for code, start, end, days in self.calendar:
@@ -177,6 +186,7 @@ class Timetable:
         return self._active_cache[d]
 
     def calendar_info(self) -> dict:
+        """First and last day of the timetable and the public holidays in between."""
         holidays = {}
         for y in range(self.start.year, self.end.year + 1):
             holidays.update(czech_holidays(y))
@@ -187,6 +197,7 @@ class Timetable:
         }
 
     def _trips_on(self, d: date) -> np.ndarray:
+        """Boolean array: which trips run on day ``d``."""
         return self.services_on(d)[self.trip_service]
 
     # ----------------------------------------------------------- vehicles ---
@@ -217,6 +228,7 @@ class Timetable:
         return int(self.trip_route[t]), self.trip_headsign[t], stops
 
     def _vehicle(self, trip, lat, lon, stop, at_stop):
+        """One vehicle as sent to the page: [lat, lon, route index, headsign, stop index, at stop]."""
         return [round(lat, 6), round(lon, 6), int(self.trip_route[trip]),
                 self.trip_headsign[trip], int(stop), at_stop]
 

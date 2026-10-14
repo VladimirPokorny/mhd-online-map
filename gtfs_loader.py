@@ -25,10 +25,12 @@ CACHE_VERSION = 3
 
 
 def _read(gtfs_dir: Path, name: str, **kwargs) -> pd.DataFrame:
+    """Read one GTFS file of the feed into a DataFrame."""
     return pd.read_csv(gtfs_dir / f"{name}.txt", encoding="utf-8-sig", **kwargs)
 
 
 def _build(gtfs_dir: Path, osm_cache: Path) -> dict:
+    """Build the network from the GTFS files: lines with track geometry, stops and stop-to-stop pieces."""
     agency = _read(gtfs_dir, "agency", dtype=str)
     routes = _read(gtfs_dir, "routes", dtype=str, keep_default_na=False)
     stops = _read(

@@ -143,12 +143,18 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 {% include "_locate.html" %}
 <script>
+// Element by id.
 const $ = id => document.getElementById(id);
+// Escape text for use in HTML (null and undefined become empty).
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
 const css = getComputedStyle(document.documentElement);
+// Value of a CSS variable.
 const cssVar = n => css.getPropertyValue(n).trim();
+// Two-digit number with a leading zero.
 const pad = n => String(n).padStart(2, "0");
+// Number in Czech format with d decimals; a dash when unknown.
 const nf = (v, d = 1) => v == null ? "–" : v.toLocaleString("cs-CZ", { minimumFractionDigits: d, maximumFractionDigits: d });
+// Czech plural: 1 linka, 2–4 linky, 5+ linek.
 const plural = (n, one, few, many) => `${n.toLocaleString("cs-CZ")} ${n === 1 ? one : n >= 2 && n <= 4 ? few : many}`;
 const MODE_LABEL = { Tram: "Tramvaj", Trolleybus: "Trolejbus", Bus: "Autobus", Train: "Vlak", Ferry: "Loď" };
 const MODES = ["Tram", "Trolleybus", "Bus", "Train", "Ferry"];
@@ -166,10 +172,14 @@ function cat(delay, age) {
   if (delay < 10) return ["--late5", "5–9 min", false];
   return ["--late10", "10 min a víc", false];
 }
+// Delay in minutes as text: N min napřed, včas or +N min.
 const delayText = d => d == null ? "–" : d < -0.5 ? `${nf(-d, 0)} min napřed` : d <= 0.5 ? "včas" : `+${nf(d, 0)} min`;
+// Line by KORDIS LineID, with a grey placeholder for lines missing in the timetable.
 const line = id => LINES[id] || { short: String(id), long: "", type: "Bus", color: "#888", text: "#fff" };
+// Coloured line number badge.
 const badge = id => { const l = line(id); return `<span class="badge" style="background:${l.color};color:${l.text}">${esc(l.short)}</span>`; };
 
+// GET an API endpoint as JSON; throws on an HTTP error.
 async function get(path) {
   const r = await fetch(path);
   if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
@@ -195,6 +205,7 @@ const markerLayer = L.layerGroup().addTo(map);
 const markers = new Map();  // vehicle number → marker (badges, zoomed in)
 const LABEL_ZOOM = 13;
 
+// Whether a vehicle passes the mode chips, the search and the late-only filter.
 function visible(v) {
   const [id, lineId, , , delay, , age, inactive] = v;
   if (inactive || !lineId) return false;
@@ -207,6 +218,7 @@ function visible(v) {
   return true;
 }
 
+// Map badge of a vehicle: line number in its delay colour, with a direction arrow.
 function badgeHtml(v, sel) {
   const [id, lineId, , , delay, bearing, age] = v;
   const [c, , dark] = cat(delay, age);
@@ -214,6 +226,7 @@ function badgeHtml(v, sel) {
   return `<div class="veh${sel ? " sel" : ""}">${arrow}<div class="b${dark ? " dark" : ""}" style="background:${cssVar(c)}">${esc(line(lineId).short)}</div></div>`;
 }
 
+// Draw the vehicles: dots when zoomed out, line badges in the visible area when zoomed in.
 function drawVehicles() {
   const zoomed = map.getZoom() >= LABEL_ZOOM;
   const bounds = map.getBounds().pad(0.2);
@@ -245,6 +258,7 @@ function drawVehicles() {
   for (const [id, m] of markers) if (!keep.has(id)) { markerLayer.removeLayer(m); markers.delete(id); }
 }
 
+// Show road events only when switched on and zoomed in enough.
 function syncEvents() {
   const on = $("showEvents").checked && map.getZoom() >= EVENT_ZOOM;
   if (on && !map.hasLayer(eventLayer)) eventLayer.addTo(map);
@@ -254,6 +268,7 @@ map.on("moveend zoomend", () => { drawVehicles(); syncEvents(); saveUrl(); });
 
 // ------------------------------------------------------------- summary ---
 
+// Totals (vehicles, average delay, share late) and the most delayed lines.
 function drawSummary() {
   const active = VEH.filter(v => v[1] && !v[7] && v[6] <= STALE_S && v[4] != null);
   $("tCount").textContent = active.length.toLocaleString("cs-CZ");
@@ -300,6 +315,7 @@ function findVehicle(q) {
   return VEH.find(v => v[0] === Number(q)) || null;
 }
 
+// Redraw after a filter change; fit zooms the map to the matching vehicles.
 function refilter(fit) {
   drawVehicles();
   if (fit) {
@@ -310,6 +326,7 @@ function refilter(fit) {
 
 // -------------------------------------------------------------- detail ---
 
+// Select a vehicle: highlight it and open its detail.
 async function select(id) {
   selected = id;
   drawVehicles();
@@ -317,6 +334,7 @@ async function select(id) {
   saveUrl();
 }
 
+// Close the vehicle detail and remove its route from the map.
 function clearSelection() {
   selected = null; DETAIL = null;
   $("detail").style.display = "none";
@@ -326,6 +344,7 @@ function clearSelection() {
 }
 
 let routeLine = null;
+// Fetch the selected vehicle's detail; draw its line's route on first load or line change, and its trail.
 async function loadDetail(first) {
   if (selected == null) return;
   const id = selected;
@@ -358,6 +377,7 @@ async function loadDetail(first) {
   else if ($("follow").checked) map.panTo([d.lat, d.lon]);
 }
 
+// Detail panel of a vehicle: delay, vehicle and train numbers, alerts and the stops of its trip.
 function renderDetail(d) {
   const l = line(d.line);
   const [c, label, dark] = cat(d.delay, d.age);
@@ -413,9 +433,12 @@ function spark(trail) {
   const W = 340, H = 64, m = { l: 26, r: 6, t: 6, b: 14 };
   const t0 = pts[0][0], t1 = pts[pts.length - 1][0];
   const lo = Math.min(0, ...pts.map(p => p[3])), hi = Math.max(3, ...pts.map(p => p[3]));
+  // Sparkline x coordinate of a timestamp (ms).
   const x = t => m.l + (t - t0) / Math.max(1, t1 - t0) * (W - m.l - m.r);
+  // Sparkline y coordinate of a delay (min).
   const y = v => m.t + (hi - v) / (hi - lo) * (H - m.t - m.b);
   const d = pts.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[3]).toFixed(1)}`).join("");
+  // Timestamp (ms) as HH:MM.
   const fmt = ms => { const dt = new Date(ms); return `${pad(dt.getHours())}:${pad(dt.getMinutes())}`; };
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Vývoj zpoždění">
     <line x1="${m.l}" x2="${W - m.r}" y1="${y(0)}" y2="${y(0)}" stroke="#c3c2b7"/>
@@ -429,9 +452,11 @@ function spark(trail) {
 
 const LEVEL = ["#c9c8c1", "#b3a9ee", "#8d7fe4", "#4a3aa7", "#2f2470"];
 const LEVEL_LABEL = ["plynulý", "mírně zpomalený", "zpomalený", "hustý, kolony", "stojí"];
+// Traffic level 0–4 from the ratio of current to free-flow speed.
 const levelOf = r => r >= 0.9 ? 0 : r >= 0.75 ? 1 : r >= 0.55 ? 2 : r >= 0.3 ? 3 : 4;
 let TGEO = null;
 
+// Colour the roads with slow car traffic (segment geometry is loaded once).
 async function loadTraffic() {
   trafficLayer.clearLayers();
   if (!META?.traffic || !$("showTraffic").checked) return;
@@ -457,12 +482,14 @@ async function loadTraffic() {
   } catch (err) { console.error(err); }
 }
 
+// Markers of the road events valid right now.
 async function loadEvents() {
   eventLayer.clearLayers();
   if (!$("showEvents").checked) return;
   try {
     const { events } = await get("/api/live/events");
     const now = Date.now();
+    // dopravniinfo.cz date (YYYY-MM-DD HH:MM:SS) as ms, or null.
     const parse = s => s ? Date.parse(s.replace(" ", "T")) : null;
     for (const e of events) {
       const from = parse(e.from), to = parse(e.to);
@@ -478,6 +505,7 @@ async function loadEvents() {
 // ------------------------------------------------------------- refresh ---
 
 let lastData = null;
+// Fetch all vehicles and redraw the map, summary and status.
 async function loadVehicles() {
   try {
     const d = await get("/api/live/vehicles");
@@ -492,6 +520,7 @@ async function loadVehicles() {
   }
 }
 
+// Status line: connection to the vehicle stream, data time and car traffic time.
 function drawStatus() {
   if (!lastData) return;
   const t = new Date(lastData.time * 1000);
@@ -500,6 +529,7 @@ function drawStatus() {
     (trafficLayer.stamp ? ` · provoz aut ${new Date(trafficLayer.stamp.replace(" ", "T")).toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" })}` : "") + `</span>`;
 }
 
+// Keep the search, selected vehicle and map view in the address, so it can be shared.
 function saveUrl() {
   const qs = new URLSearchParams();
   if ($("search").value.trim()) qs.set("linka", $("search").value.trim());
@@ -510,6 +540,7 @@ function saveUrl() {
 
 // ---------------------------------------------------------------- init ---
 
+// Mode chips, legend and the handlers of the search and the checkboxes.
 function buildControls() {
   $("chips").innerHTML = MODES.map(m => `<button class="chip on" data-mode="${m}">${MODE_LABEL[m]}</button>`).join("");
   $("chips").addEventListener("click", ev => {
@@ -537,6 +568,7 @@ function buildControls() {
   $("showEvents").onchange = () => { loadEvents(); syncEvents(); };
 }
 
+// Start: load the lines, apply the address (line, vehicle, view) and start the refresh timers.
 async function init() {
   buildControls();
   try { META = await get("/api/live/meta"); } catch { $("status").innerHTML = `<i class="dot off"></i><span>Živá mapa není k dispozici.</span>`; return; }

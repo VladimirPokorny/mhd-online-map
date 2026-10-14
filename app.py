@@ -85,6 +85,7 @@ class State:
 
     @property
     def version(self) -> str:
+        """Identifier of the GTFS version this state was built from."""
         return self.network["version"]
 
 
@@ -104,6 +105,7 @@ def _current() -> State:
 
 
 def _date_arg(s: State) -> date:
+    """The ``date`` query parameter; 400 if missing or outside the timetable validity."""
     try:
         d = date.fromisoformat(request.args["date"])
     except (KeyError, ValueError):
@@ -114,6 +116,7 @@ def _date_arg(s: State) -> date:
 
 
 def _time_arg() -> int:
+    """The ``time`` query parameter (seconds since midnight); 400 if missing or out of range."""
     t = request.args.get("time", type=int)
     if t is None or not 0 <= t < 86_400:
         abort(400, "time=<seconds since midnight> required")
@@ -122,26 +125,31 @@ def _time_arg() -> int:
 
 @app.errorhandler(409)
 def stale(_):
+    """Tell the page that it was loaded from an older timetable version, so it can reload."""
     return jsonify({"error": "stale", "version": state.version}), 409
 
 
 @app.route("/healthz")
 def healthz():
+    """Health check for the container: status, timetable version, number of lines and feed info."""
     s = state
     return {"status": "ok", "version": s.version, "lines": len(s.network["routes"]), "feed": s.feed}
 
 
 @app.route("/")
 def index():
+    """The network map with its timetable playback."""
     return render_template("index.html", agency=state.network["agency"])
 
 
 def _cz_date(d) -> str:
+    """A date in Czech notation, e.g. 14. 10. 2026."""
     return f"{d.day}. {d.month}. {d.year}"
 
 
 @app.route("/o-aplikaci")
 def about():
+    """The About page with help and statistics of the current timetable."""
     s = state
     published = s.feed.get("published")
     if published:
@@ -200,7 +208,7 @@ def manifest():
 
 @app.route("/sw.js")
 def service_worker():
-    # Served from the root so that it may handle every page of the app.
+    """The service worker, served from the root so that it may handle every page of the app."""
     response = send_from_directory(BASE_DIR / "static", "sw.js", mimetype="text/javascript", max_age=0)
     response.headers["Cache-Control"] = "no-cache"
     return response
@@ -208,29 +216,34 @@ def service_worker():
 
 @app.route("/offline")
 def offline():
+    """The page the service worker shows when there is no connection."""
     return render_template("offline.html")
 
 
 @app.route("/api/network")
 def api_network():
+    """Lines, stops and track geometry of the current timetable, with feed info."""
     s = state
     return jsonify({**s.network, "feed": s.feed})
 
 
 @app.route("/api/calendar")
 def api_calendar():
+    """Validity of the timetable and the public holidays within it."""
     s = _current()
     return jsonify(s.timetable.calendar_info())
 
 
 @app.route("/api/profile")
 def api_profile():
+    """Number of vehicles in service per mode over one day, for the timeline chart."""
     s = _current()
     return jsonify(s.timetable.profile(_date_arg(s)))
 
 
 @app.route("/api/vehicles")
 def api_vehicles():
+    """Scheduled positions of all vehicles at the given date and time."""
     s = _current()
     d, t = _date_arg(s), _time_arg()
     return jsonify({"date": d.isoformat(), "time": t, "vehicles": s.timetable.vehicles(d, t)})
@@ -238,6 +251,7 @@ def api_vehicles():
 
 @app.route("/api/reach")
 def api_reach():
+    """Where one can get from a stop within the given number of minutes."""
     s = _current()
     d, t = _date_arg(s), _time_arg()
     stop = request.args.get("stop", type=int)
@@ -280,16 +294,19 @@ def _lines() -> dict:
 
 
 def _live() -> LiveState:
+    """The live state; 404 when the live map is turned off."""
     if live is None:
         abort(404, "the live map is turned off (LIVE=false)")
     return live
 
 
 def _hhmm(seconds: int) -> str:
+    """Seconds since midnight as HH:MM (times past midnight wrap around)."""
     return f"{seconds // 3600 % 24:02d}:{seconds // 60 % 60:02d}"
 
 
 def _flat(pts) -> list:
+    """A list of [lat, lon] points as one flat list rounded to 5 decimals, for smaller JSON."""
     return [round(v, 5) for p in pts for v in p]
 
 
@@ -330,11 +347,13 @@ def _trip_detail(trip, v: dict):
 
 @app.route("/zive")
 def live_page():
+    """The live map of vehicles with their delays."""
     return render_template("live.html", agency=state.network["agency"], enabled=live is not None)
 
 
 @app.route("/api/live/meta")
 def api_live_meta():
+    """Lines of the current timetable by KORDIS LineID, and whether car traffic is available."""
     lv = _live()
     return jsonify({"lines": _lines(), "traffic": lv.traffic_fetched is not None or LIVE_TRAFFIC})
 
@@ -353,6 +372,7 @@ def api_live_vehicles():
 
 @app.route("/api/live/vehicle/<int:vid>")
 def api_live_vehicle(vid: int):
+    """Everything known about one vehicle: position, delay, trail, its trip's stops and line alerts."""
     lv = _live()
     v = lv.vehicle(vid)
     if v is None:
@@ -384,6 +404,7 @@ def api_live_route(line: int):
 
 @app.route("/api/live/events")
 def api_live_events():
+    """Road events in Brno (closures, roadworks, accidents) from dopravniinfo.cz."""
     lv = _live()
     return jsonify({"events": lv.events, "fetched": lv.traffic_fetched})
 
@@ -403,6 +424,7 @@ def api_live_traffic():
 
 
 def _off(name: str) -> bool:
+    """Whether the environment variable ``name`` turns a feature off (it is on by default)."""
     return os.environ.get(name, "true").strip().lower() in ("0", "false", "no", "off")
 
 
@@ -410,6 +432,7 @@ LIVE_TRAFFIC = not _off("LIVE_TRAFFIC")
 
 
 def _start_live():
+    """Start the live data threads unless the live map is turned off (LIVE=false)."""
     global live
     if not _off("LIVE"):
         live = LiveState()
@@ -419,6 +442,7 @@ def _start_live():
 # ------------------------------------------------------------------ loading ---
 
 def build_state(gtfs_dir: Path, cache_dir: Path, feed: dict) -> State:
+    """Load one GTFS version: network, timetable and reachability index."""
     print(f"Loading GTFS from {gtfs_dir} (cache {cache_dir}) ...", flush=True)
     t0 = time.perf_counter()
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -478,6 +502,7 @@ def check_for_update(cache_dir: Path) -> bool:
 
 
 def _update_loop(cache_dir: Path, interval_s: float):
+    """Background thread: check for a new timetable every ``interval_s`` seconds."""
     time.sleep(5)  # let the server come up first
     while True:
         check_for_update(cache_dir)
@@ -485,6 +510,7 @@ def _update_loop(cache_dir: Path, interval_s: float):
 
 
 def _init(gtfs_dir: Path, cache_dir: Path, url: str):
+    """Set up the feed store and load the current timetable, downloading one if there is none."""
     global store
     store = FeedStore(cache_dir, url, gtfs_dir)
     folder, _ = store.current()
@@ -513,6 +539,7 @@ def create_app():
 
 
 def main():
+    """Command line entry point for development, prebuilding the cache and updates."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--gtfs", type=Path, default=Path(os.environ.get("GTFS_DIR", BASE_DIR / "GTFS")), help="bundled GTFS folder")
     parser.add_argument("--cache", type=Path, default=Path(os.environ.get("CACHE_DIR", BASE_DIR)), help="cache folder")

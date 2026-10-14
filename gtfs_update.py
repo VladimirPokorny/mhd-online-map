@@ -25,7 +25,9 @@ KEEP_VERSIONS = 2
 
 
 class FeedStore:
+    """Downloaded GTFS versions on disk and which one is current."""
     def __init__(self, root: Path, url: str, fallback_dir: Path):
+        """``root`` holds the downloaded versions, ``fallback_dir`` is the bundled feed."""
         self.root = root
         self.url = url
         self.fallback_dir = fallback_dir
@@ -35,12 +37,14 @@ class FeedStore:
     # ------------------------------------------------------------ state ---
 
     def meta(self) -> dict:
+        """Contents of feed.json (current version, HTTP validators, timestamps); empty if missing."""
         try:
             return json.loads(self.meta_file.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
 
     def _save_meta(self, meta: dict):
+        """Write feed.json atomically (via a temporary file)."""
         tmp = self.meta_file.with_suffix(".tmp")
         tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
         tmp.replace(self.meta_file)
@@ -106,6 +110,7 @@ class FeedStore:
                 pass
 
         def commit():
+            """Make the downloaded feed the current one and delete old versions."""
             meta = self.meta()
             meta.update(
                 current=feed_id, etag=etag, last_modified_raw=last_modified_raw,
@@ -117,6 +122,7 @@ class FeedStore:
         return target, commit
 
     def _unpack(self, body: bytes, target: Path):
+        """Unpack the GTFS zip into ``target``, checking that the required files are present."""
         with zipfile.ZipFile(io.BytesIO(body)) as z:
             names = {Path(n).name: n for n in z.namelist() if n.endswith(".txt")}
             missing = [f for f in REQUIRED if f not in names]
@@ -134,6 +140,7 @@ class FeedStore:
         tmp.replace(target)
 
     def _prune(self, keep: set):
+        """Delete all but the newest KEEP_VERSIONS feed folders, never those in ``keep``."""
         if not self.feeds.exists():
             return
         dirs = sorted((d for d in self.feeds.iterdir() if d.is_dir()), key=lambda d: d.stat().st_mtime, reverse=True)

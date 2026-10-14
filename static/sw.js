@@ -3,6 +3,7 @@
 const CACHE = "mhd-offline-v1";
 const OFFLINE = "/offline";
 
+// Install: cache the offline page and take over without waiting.
 self.addEventListener("install", event => {
   // put() replaces an existing copy (add() fails in Chrome when the entry already exists).
   event.waitUntil(
@@ -13,6 +14,7 @@ self.addEventListener("install", event => {
   );
 });
 
+// Activate: delete caches of older versions and control the open pages.
 self.addEventListener("activate", event => {
   event.waitUntil(
     caches.keys()
@@ -21,6 +23,7 @@ self.addEventListener("activate", event => {
   );
 });
 
+// Page loads go to the network; without a connection the offline page is shown.
 self.addEventListener("fetch", event => {
   if (event.request.mode !== "navigate") return;  // API calls, tiles etc. go straight to the network
   event.respondWith(fetch(event.request).catch(() => caches.match(OFFLINE)));

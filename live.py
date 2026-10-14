@@ -31,12 +31,14 @@ INCOMING_AT, STOPPED_AT, IN_TRANSIT_TO = 0, 1, 2
 
 
 def _get(url: str, timeout: int = 60) -> bytes:
+    """Download a URL (without caches) and return the body."""
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Cache-Control": "no-cache"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
 
 
 def _text(translated) -> str:
+    """The first translation of a GTFS Realtime TranslatedString, or an empty string."""
     for t in translated.translation:
         return t.text
     return ""
@@ -98,7 +100,9 @@ def segment_geometry(geo: str) -> list:
 # --------------------------------------------------------------- the state ---
 
 class LiveState:
+    """In-memory live data: vehicles, their trips, line alerts, car traffic and road events."""
     def __init__(self):
+        """Empty state; call start() to begin receiving data."""
         self.lock = threading.Lock()
         self.vehicles = {}    # vehicle number → latest state and trail
         self.trips = {}       # vehicle number → (trip_id, stop_id, stop status)
@@ -112,12 +116,14 @@ class LiveState:
         self.traffic_stamp = None
 
     def start(self, traffic: bool = True):
+        """Start the background threads: vehicle stream, GTFS Realtime and optionally car traffic."""
         for target in (self.run_stream, self.run_rt) + ((self.run_traffic,) if traffic else ()):
             threading.Thread(target=target, daemon=True).start()
 
     # ------------------------------------------------------ vehicle stream ---
 
     def run_stream(self):
+        """Background thread: receive the KORDIS vehicle stream, reconnecting with backoff."""
         import websocket  # websocket-client
         backoff = 5
         while True:
@@ -178,6 +184,7 @@ class LiveState:
             return [(vid, {k: v[k] for k in v if k != "trail"}) for vid, v in self.vehicles.items() if v["ms"] >= cutoff]
 
     def vehicle(self, vid: int):
+        """Latest state of one vehicle with its trail, or None if unknown."""
         with self.lock:
             v = self.vehicles.get(vid)
             return None if v is None else {**v, "trail": list(v["trail"])}
@@ -185,6 +192,7 @@ class LiveState:
     # ------------------------------------------------------- GTFS Realtime ---
 
     def run_rt(self):
+        """Background thread: poll GTFS Realtime every RT_POLL_S seconds."""
         while True:
             try:
                 self.poll_rt()
@@ -194,6 +202,7 @@ class LiveState:
             time.sleep(RT_POLL_S)
 
     def poll_rt(self):
+        """Download GTFS Realtime once: the trip of each vehicle and the service alerts per line."""
         from google.transit import gtfs_realtime_pb2
         feed = gtfs_realtime_pb2.FeedMessage()
         feed.ParseFromString(_get(GTFS_RT_URL))
@@ -223,16 +232,19 @@ class LiveState:
             self.rt_fetched = time.time()
 
     def trip_of(self, vid: int):
+        """(trip_id, stop_id, stop status) of the trip a vehicle runs, or None."""
         with self.lock:
             return self.trips.get(vid)
 
     def alerts_of(self, line: int) -> list:
+        """Service alerts of a line (by KORDIS LineID)."""
         with self.lock:
             return list(self.alerts.get(line, []))
 
     # --------------------------------------------- car traffic, road events ---
 
     def run_traffic(self):
+        """Background thread: poll dopravniinfo.cz every TRAFFIC_POLL_S seconds."""
         time.sleep(10)
         while True:
             try:
@@ -242,6 +254,7 @@ class LiveState:
             time.sleep(TRAFFIC_POLL_S)
 
     def poll_traffic(self):
+        """Download car traffic and road events in Brno once; segment geometry is decoded only once."""
         data = json.loads(_get(TRAFFIC_URL).decode("utf-8-sig"))
         segments, traffic, stamp = dict(self.segments), {}, None
         for f in data.get("Fcd") or []:

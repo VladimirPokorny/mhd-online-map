@@ -14,11 +14,13 @@
     box-shadow:0 2px 10px rgba(0,0,0,.3); }
 </style>
 <script>
+// Add the "my location" button to a Leaflet map.
 function addLocateControl(map) {
   const BLUE = "#2a78d6";
   let watching = false, located = false, marker = null, accuracy = null, msgTimer = null;
 
   const Control = L.Control.extend({
+    // Create the button.
     onAdd() {
       const box = L.DomUtil.create("div", "leaflet-bar leaflet-control");
       const btn = L.DomUtil.create("button", "locate-btn", box);
@@ -36,6 +38,7 @@ function addLocateControl(map) {
   const control = new Control({ position: map.zoomControl ? map.zoomControl.getPosition() : "topleft" }).addTo(map);
   const btn = control.btn;
 
+  // Show a short message over the map for 6 seconds.
   function message(text) {
     let el = map.getContainer().querySelector(".locate-msg");
     if (!el) {
@@ -47,6 +50,7 @@ function addLocateControl(map) {
     msgTimer = setTimeout(() => el.remove(), 6000);
   }
 
+  // Button press: start locating, bring the map back to the position, or stop.
   function onClick() {
     if (!watching) return start();
     // On: the first press after panning away brings the map back, the next one stops.
@@ -57,6 +61,7 @@ function addLocateControl(map) {
     }
   }
 
+  // Ask the browser for the position and keep following it.
   function start() {
     if (!("geolocation" in navigator)) return message("Tento prohlížeč neumí zjistit polohu.");
     if (!window.isSecureContext) return message("Poloha funguje jen na zabezpečené adrese (https).");
@@ -66,6 +71,7 @@ function addLocateControl(map) {
     map.locate({ watch: true, setView: false, enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 });
   }
 
+  // Stop following the position and remove it from the map.
   function stop() {
     watching = false;
     map.stopLocate();
@@ -74,6 +80,7 @@ function addLocateControl(map) {
     if (accuracy) { accuracy.remove(); accuracy = null; }
   }
 
+  // New position: move the dot and accuracy circle; centre the map on the first one.
   map.on("locationfound", e => {
     if (!watching) return;
     btn.classList.remove("busy");
@@ -93,6 +100,7 @@ function addLocateControl(map) {
     }
   });
 
+  // Locating failed: stop and explain why.
   map.on("locationerror", e => {
     if (!watching) return;
     // A timeout while already located just means no new fix yet; keep watching.
