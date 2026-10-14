@@ -7,6 +7,7 @@ A web app that shows the network of the South Moravian Region's integrated publi
 - **A chart** shows how many vehicles are in service throughout the day, by mode of transport.
 - **A reachability map** shows where you can get from a chosen stop within 15–120 minutes.
 - **A live map** (`/zive`) shows where every vehicle is right now and how late it is, with the remaining stops and their expected times, service alerts for the line, live car traffic and road closures in Brno.
+- **A statistics page** (`/statistiky`) shows what the history collector has stored: delays of IDS JMK vehicles by mode and the most delayed lines, current diversions, weather with the forecast, free spaces in car parks, cyclists and pedestrians, swimming pools and ice rinks, water outages, today's events, and the state of every collector job.
 
 The user interface is in Czech. Below, Czech labels are quoted as they appear on screen, with a translation where it helps.
 
@@ -334,6 +335,7 @@ python app.py --update --build-only
 | `templates/_pwa.html` | home-screen app: manifest link, icons, service worker, install link |
 | `static/sw.js`, `static/icons/` | service worker and app icons |
 | `templates/about.html` | the about / help page for users |
+| `stats.py`, `templates/stats.html` | the statistics page: read-only queries of the collector's database, cached for 5 minutes |
 | `GTFS/` | optional bundled timetable (fallback) |
 | `osm_cache/` | downloaded OSM and OSRM data |
 | `feeds/`, `feed.json` | downloaded timetable versions (created at runtime in `CACHE_DIR`) |
@@ -359,6 +361,12 @@ python app.py --update --build-only
 | `GET /api/live/traffic/geometry` | car traffic road segments: `[id, name, road, [flat lat/lon list per part]]` |
 | `GET /api/live/traffic` | car traffic now: `{segment id: [speed / free-flow speed, delay s]}` |
 | `GET /api/live/events` | road closures and restrictions in Brno |
+| `GET /statistiky` | statistics from the history database (Czech); `?dny=1\|7\|30` picks the period |
+| `GET /api/stats/delays?days=1\|7\|30` | average delay per hour (per day for 30) and mode, the 15 most delayed lines, stored days |
+| `GET /api/stats/weather?days=…` | hourly weather, the latest forecast, Teplárny Brno sites |
+| `GET /api/stats/parking?days=…&lot=<name>` | car parks now and free spaces over time (all car parks without `lot`) |
+| `GET /api/stats/counts?days=…` | cyclists and pedestrians over time and the busiest places |
+| `GET /api/stats/diversions`, `/api/stats/city`, `/api/stats/status` | current diversions; pools, water outages and today's events; collector jobs |
 
 All endpoints except `/api/network` accept a `v=<version>` parameter. If the server has meanwhile switched to a newer timetable, it responds with `409` and the page offers to reload.
 
@@ -376,7 +384,7 @@ All endpoints except `/api/network` accept a `v=<version>` parameter. If the ser
 
 ## 9. History collector (PostgreSQL)
 
-Most live sources on data.brno.cz publish only the current state: free spaces in a car park now, people in a swimming pool now, the last hour of a bike counter. The KORDIS archive of vehicle positions keeps only 7 days. Statistics and predictions need history, so the collector polls these sources on a schedule and keeps everything in PostgreSQL. It runs as its own service (`collector` in `docker-compose.yml`), next to the web app, which does not use the database yet.
+Most live sources on data.brno.cz publish only the current state: free spaces in a car park now, people in a swimming pool now, the last hour of a bike counter. The KORDIS archive of vehicle positions keeps only 7 days. Statistics and predictions need history, so the collector polls these sources on a schedule and keeps everything in PostgreSQL. It runs as its own service (`collector` in `docker-compose.yml`), next to the web app. The web app reads it for the statistics page (`/statistiky`) when `DATABASE_URL` or `PGHOST` is set (compose sets the `PG*` variables for it), with read-only connections and a 30-second statement timeout; without them the page says that statistics are off. If the database is down, the `/api/stats/*` endpoints answer `503` and the maps are unaffected.
 
 ### What it stores
 

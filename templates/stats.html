@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Statistiky – Brno a IDS JMK</title>
+<meta name="description" content="Zpoždění MHD, počasí, parkoviště, cyklisté a chodci a dění v Brně z dat, která aplikace průběžně sbírá.">
+<style>
+  :root {
+    --bg:#fff; --fg:#1d2433; --muted:#5b6475; --line:#e3e6ec; --soft:#f5f7fa; --accent:#00224b; --grid:#e6e5e0;
+    --blue:#2a78d6; --orange:#eb6834; --aqua:#1baf7a; --yellow:#eda100; --pink:#e87ba4; --gray:#8d919b;
+    /* Chart series: one fixed colour per mode, as on the network map. */
+    --mode-Tram:#2a78d6; --mode-Trolleybus:#eb6834; --mode-Bus:#1baf7a; --mode-Train:#eda100; --mode-Ferry:#e87ba4;
+    --good:#1a8a4f; --bad:#c23a2b;
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  a { color:var(--blue); }
+  button, select { font:inherit; color:inherit; }
+  .wrap { max-width:1100px; margin:0 auto; padding:0 20px; }
+
+  .bar { position:sticky; top:0; z-index:10; background:rgba(255,255,255,.95); backdrop-filter:blur(6px); border-bottom:1px solid var(--line); }
+  .bar .wrap { display:flex; align-items:center; gap:16px; min-height:56px; flex-wrap:wrap; }
+  .brand { font-weight:700; color:var(--fg); text-decoration:none; font-size:15px; margin-right:auto; }
+  .bar nav { display:flex; gap:14px; font-size:14px; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg button { border:0; background:var(--bg); padding:6px 12px; cursor:pointer; font-size:14px; }
+  .seg button + button { border-left:1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background:var(--accent); color:#fff; }
+
+  .hero { padding:32px 0 8px; }
+  .hero h1 { font-size:30px; line-height:1.2; margin:0 0 8px; }
+  .hero p { color:var(--muted); margin:0; max-width:720px; }
+  .toc { display:flex; flex-wrap:wrap; gap:6px 16px; margin:14px 0 0; font-size:14px; }
+
+  section { padding:28px 0; border-top:1px solid var(--line); margin-top:24px; }
+  section + section { margin-top:0; }
+  h2 { font-size:22px; margin:0 0 4px; }
+  h3 { font-size:16px; margin:22px 0 6px; }
+  .sub { color:var(--muted); margin:0 0 14px; font-size:14px; }
+  .note { color:var(--muted); font-size:13px; margin:8px 0 0; }
+  .err { background:#fff4f2; border:1px solid #f3c7bf; border-radius:8px; padding:10px 14px; font-size:14px; }
+  .empty { color:var(--muted); font-style:italic; font-size:14px; }
+  .loading { color:var(--muted); font-size:14px; }
+
+  .tiles { display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; margin:0 0 16px; }
+  .tile { background:var(--soft); border-radius:10px; padding:12px 14px; }
+  .tile b { display:block; font-size:24px; line-height:1.2; font-variant-numeric:tabular-nums; }
+  .tile span { font-size:13px; color:var(--muted); }
+
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+  .grid2 > *, .tiles > * { min-width:0; }   /* wide tables scroll inside instead of widening the page */
+  .tile b { overflow-wrap:anywhere; }
+
+  /* charts */
+  .chart { position:relative; }
+  .chart svg { display:block; width:100%; height:220px; touch-action:pan-y; }
+  .chart.small svg { height:150px; }
+  .chart text { font-size:11px; fill:var(--muted); font-variant-numeric:tabular-nums; }
+  .legend { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:13px; color:var(--muted); margin:0 0 6px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .legend i { width:14px; height:3px; border-radius:2px; }
+  .legend i.dash { background:none !important; border-top:2px dashed var(--c); height:0; }
+  .tip { position:absolute; pointer-events:none; background:var(--bg); border:1px solid var(--line); border-radius:8px;
+    box-shadow:0 4px 14px rgba(0,0,0,.12); padding:6px 10px; font-size:13px; white-space:nowrap; z-index:5; display:none; }
+  .tip b { display:block; margin-bottom:2px; }
+  .tip div { display:flex; align-items:center; gap:6px; }
+  .tip i { width:10px; height:3px; border-radius:2px; }
+  .tip em { font-style:normal; margin-left:auto; padding-left:12px; font-weight:600; font-variant-numeric:tabular-nums; }
+  details.data { margin:6px 0 0; font-size:13px; }
+  details.data summary { cursor:pointer; color:var(--muted); }
+  details.data .scroll { max-height:260px; overflow:auto; margin-top:6px; }
+
+  /* tables */
+  .tbl { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-weight:600; color:var(--muted); font-size:13px; }
+  td.n, th.n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .badge { display:inline-block; min-width:30px; text-align:center; border-radius:4px; padding:0 6px; font-weight:700; font-size:13px; }
+  .meter { display:inline-block; width:90px; height:8px; background:var(--soft); border-radius:4px; overflow:hidden; vertical-align:middle; margin-right:6px; }
+  .meter i { display:block; height:100%; background:var(--blue); border-radius:4px; }
+  .ok { color:var(--good); font-weight:600; }
+  .fail { color:var(--bad); font-weight:600; }
+  select { padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); max-width:100%; }
+
+  .list { display:grid; gap:10px; }
+  .item { border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:14px; }
+  .item h4 { margin:0 0 2px; font-size:15px; }
+  .item p { margin:4px 0 0; color:var(--muted); }
+  .item .meta { color:var(--muted); font-size:13px; }
+  .more { margin-top:8px; }
+
+  footer { border-top:1px solid var(--line); padding:24px 0 40px; font-size:14px; color:var(--muted); margin-top:24px; }
+
+  @media (max-width: 760px) {
+    .wrap { padding:0 16px; }
+    .tiles { grid-template-columns:repeat(2, 1fr); }
+    .grid2 { grid-template-columns:1fr; }
+    .hero h1 { font-size:25px; }
+    .bar nav { display:none; }
+    .bar .wrap { gap:8px; padding-top:8px; padding-bottom:8px; }
+    .brand { font-size:14px; }
+    .seg button { padding:5px 8px; font-size:13px; }
+    .chart svg { height:190px; }
+  }
+</style>
+{% include "_pwa.html" %}
+{% include "_analytics.html" %}
+</head>
+<body>
+
+<div class="bar">
+  <div class="wrap">
+    <a class="brand" href="/statistiky">Statistiky Brna a IDS JMK</a>
+    <nav><a href="/">Mapa sítě</a><a href="/zive">Živá mapa</a><a href="/o-aplikaci">O aplikaci</a></nav>
+    {% if enabled %}
+    <div class="seg" role="group" aria-label="Období">
+      <button data-days="1">24 hodin</button><button data-days="7">7 dní</button><button data-days="30">30 dní</button>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<main class="wrap">
+  <div class="hero">
+    <h1>Co se v Brně děje</h1>
+    <p>Zpoždění veřejné dopravy, počasí, volná místa na parkovištích, počty cyklistů a chodců a další data, která aplikace průběžně ukládá z otevřených zdrojů města Brna a IDS JMK.</p>
+    {% if enabled %}
+    <div class="toc">
+      <a href="#zpozdeni">Zpoždění MHD</a><a href="#vyluky">Výluky</a><a href="#pocasi">Počasí</a><a href="#parkovani">Parkování</a>
+      <a href="#cyklo">Cyklisté a chodci</a><a href="#mesto">Koupaliště a město</a><a href="#sber">Sběr dat</a>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if not enabled %}
+  <section>
+    <div class="err">Statistiky nejsou na tomto serveru zapnuté: aplikace nemá připojení k databázi, kterou plní sběr dat (<code>python -m collector</code>). Nastavte proměnnou <code>DATABASE_URL</code>, nebo <code>PGHOST</code>, <code>PGUSER</code>, <code>PGPASSWORD</code> a <code>PGDATABASE</code>.</div>
+  </section>
+  {% else %}
+
+  <section id="zpozdeni">
+    <h2>Zpoždění MHD</h2>
+    <p class="sub">Vozidla IDS JMK podle dat KORDIS JMK.</p>
+    <div data-body="delays"><p class="loading">Načítám…</p></div>
+  </section>
+
+  <section id="vyluky">
+    <h2>Výluky a omezení</h2>
+    <p class="sub">Odklony, uzavírky a přesunuté zastávky IDS JMK, které platí teď nebo začnou později.</p>
+    <div data-body="diversions"><p class="loading">Načítám…</p></div>
+  </section>
+
+  <section id="pocasi">
+    <h2>Počasí</h2>
+    <p class="sub">Hodinové hodnoty pro Brno (Open-Meteo) a teplota vzduchu na stanovištích Tepláren Brno.</p>
+    <div data-body="weather"><p class="loading">Načítám…</p></div>
+  </section>
+
+  <section id="parkovani">
+    <h2>Parkování</h2>
+    <p class="sub">Volná místa na parkovištích a P+R v Brně.</p>
+    <div data-body="parking"><p class="loading">Načítám…</p></div>
+  </section>
+
+  <section id="cyklo">
+    <h2>Cyklisté a chodci</h2>
+    <p class="sub">Sčítací kamery města Brna.</p>
+    <div data-body="counts"><p class="loading">Načítám…</p></div>
+  </section>
+
+  <section id="mesto">
+    <h2>Koupaliště, kluziště a město</h2>
+    <p class="sub">Návštěvnost sportovišť STAREZ, odstávky vody a dnešní kulturní akce.</p>
+    <div data-body="city"><p class="loading">Načítám…</p></div>
+  </section>
+
+  <section id="sber">
+    <h2>Sběr dat</h2>
+    <p class="sub">Poslední běh každé úlohy, která data stahuje.</p>
+    <div data-body="status"><p class="loading">Načítám…</p></div>
+  </section>
+  {% endif %}
+</main>
+
+<footer>
+  <div class="wrap">
+    Zdroje: KORDIS JMK, data.brno.cz, Open-Meteo, Teplárny Brno, STAREZ, Brněnské vodárny a kanalizace, GoToBrno ·
+    Data jízdního řádu: {{ agency }} · Nezávislá aplikace, není oficiálním produktem IDS JMK ani KORDIS JMK.
+  </div>
+</footer>
+
+{% if enabled %}
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const NUM = new Intl.NumberFormat("cs-CZ");
+// A number in Czech notation with the given decimals; "–" when missing.
+const num = (v, d = 0) => v == null || Number.isNaN(v) ? "–" : new Intl.NumberFormat("cs-CZ", {minimumFractionDigits: d, maximumFractionDigits: d}).format(v);
+const pct = v => v == null ? "–" : num(v * 100, 0) + " %";
+const MODES = [["Tram", "Tramvaje"], ["Trolleybus", "Trolejbusy"], ["Bus", "Autobusy"], ["Train", "Vlaky"], ["Ferry", "Lodě"]];
+const DOW = ["ne", "po", "út", "st", "čt", "pá", "so"];
+
+// ---------------------------------------------------------------- times ---
+
+// A bucket "YYYY-MM-DDTHH:MM" (Prague local time) as a number for the x axis (wall-clock ms, no time zone).
+const tx = s => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10), +s.slice(11, 13), +s.slice(14, 16));
+// A bucket as a short label: "po 13. 10. 14:00", without the time for daily buckets.
+function bucketLabel(s, unit) {
+  const d = new Date(tx(s));
+  const day = `${DOW[d.getUTCDay()]} ${d.getUTCDate()}. ${d.getUTCMonth() + 1}.`;
+  return unit === "day" ? day : `${day} ${s.slice(11, 16)}`;
+}
+const PRAGUE = new Intl.DateTimeFormat("cs-CZ", {timeZone: "Europe/Prague", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit"});
+const PRAGUE_DAY = new Intl.DateTimeFormat("cs-CZ", {timeZone: "Europe/Prague", day: "numeric", month: "numeric", year: "numeric"});
+// An ISO time in Prague time, e.g. "14. 10. 08:15"; "–" when missing.
+const when = iso => iso ? PRAGUE.format(new Date(iso)) : "–";
+// How long ago an ISO time was, e.g. "před 5 min".
+function ago(iso) {
+  if (!iso) return "–";
+  const m = Math.round((Date.now() - new Date(iso)) / 60000);
+  if (m < 1) return "právě teď";
+  if (m < 60) return `před ${m} min`;
+  if (m < 48 * 60) return `před ${Math.round(m / 60)} h`;
+  return `před ${Math.round(m / 1440)} dny`;
+}
+// A validity period of an event or a diversion.
+function period(from, to, dayOnly) {
+  const f = dayOnly ? PRAGUE_DAY : PRAGUE;
+  if (!from && !to) return "";
+  if (!to) return `od ${f.format(new Date(from))}`;
+  if (!from) return `do ${f.format(new Date(to))}`;
+  return `${f.format(new Date(from))} – ${f.format(new Date(to))}`;
+}
+
+// ---------------------------------------------------------------- chart ---
+
+// Round numbers for a value axis between lo and hi: about four steps of 1, 2 or 5 × 10^k.
+function ticks(lo, hi) {
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const raw = (hi - lo) / 4, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map(k => k * mag).find(s => s >= raw);
+  const out = [];
+  for (let v = Math.floor(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(+v.toFixed(10));
+  if (out[out.length - 1] < hi) out.push(out[out.length - 1] + step);
+  return out;
+}
+
+// Times for the x axis labels: local midnights over several days, otherwise every few hours.
+function timeTicks(t0, t1, width) {
+  const H = 3600e3, D = 24 * H, span = t1 - t0, maxLabels = Math.max(2, Math.floor(width / 70));
+  const steps = span > 1.5 * D ? [D, 2 * D, 5 * D, 7 * D] : [H, 2 * H, 3 * H, 6 * H, 12 * H];
+  const step = steps.find(s => span / s <= maxLabels) || steps[steps.length - 1];
+  const out = [];
+  for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) out.push(t);
+  return {list: out, daily: step >= D};
+}
+
+/* A time chart with one value axis: lines (``type: "line"``, optionally dashed) and bars.
+   opts: {x: [bucket strings], unit: "hour" | "day", series: [{name, color, values, type, dash}],
+          format: v => text, zero: include 0 on the axis, small: lower chart}. */
+function timeChart(el, opts) {
+  const series = opts.series.filter(s => s.values.some(v => v != null));
+  if (!opts.x.length || !series.length) { el.innerHTML = `<p class="empty">Za toto období zatím nejsou data.</p>`; return; }
+  const fmt = opts.format || (v => num(v, 1));
+  const legend = series.length > 1 || opts.legend
+    ? `<div class="legend">${series.map(s => `<span><i class="${s.dash ? "dash" : ""}" style="background:${s.color};--c:${s.color}"></i>${esc(s.name)}</span>`).join("")}</div>` : "";
+  el.innerHTML = `${legend}<div class="chart${opts.small ? " small" : ""}"><svg role="img" aria-label="${esc(opts.label || "")}"></svg><div class="tip"></div></div>
+    <details class="data"><summary>Zobrazit jako tabulku</summary><div class="scroll"></div></details>`;
+  const svg = el.querySelector("svg"), tip = el.querySelector(".tip"), wrap = el.querySelector(".chart");
+  const xs = opts.x.map(tx);
+  const bucketMs = opts.unit === "day" ? 864e5 : 36e5;
+  const bars = series.filter(s => s.type === "bar");
+
+  // The table view, built once.
+  el.querySelector(".scroll").innerHTML = `<table><tr><th>Čas</th>${series.map(s => `<th class="n">${esc(s.name)}</th>`).join("")}</tr>${
+    opts.x.map((x, i) => series.some(s => s.values[i] != null)
+      ? `<tr><td>${bucketLabel(x, opts.unit)}</td>${series.map(s => `<td class="n">${s.values[i] == null ? "" : fmt(s.values[i])}</td>`).join("")}</tr>` : "").reverse().join("")}</table>`;
+
+  function draw() {
+    const W = svg.clientWidth, H = svg.clientHeight;
+    if (!W) return;
+    const L = 44, R = 10, T = 8, B = 22;
+    const vals = series.flatMap(s => s.values).filter(v => v != null);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (opts.zero || bars.length) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+    const yt = ticks(lo, hi);
+    lo = yt[0]; hi = yt[yt.length - 1];
+    // Bars stand in their bucket; lines sit at the bucket's start.
+    const t0 = xs[0], t1 = xs[xs.length - 1] + (bars.length ? bucketMs : 0);
+    const X = t => L + (t1 === t0 ? 0.5 : (t - t0) / (t1 - t0)) * (W - L - R);
+    const Y = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+    let h = "";
+    for (const v of yt) h += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="${v === 0 ? "#c9ccd3" : css("--grid")}" stroke-width="1"/>
+      <text x="${L - 6}" y="${Y(v) + 4}" text-anchor="end">${fmt(v)}</text>`;
+    const tt = timeTicks(t0, t1, W - L - R);
+    for (const t of tt.list) {
+      const d = new Date(t);
+      const label = tt.daily ? `${DOW[d.getUTCDay()]} ${d.getUTCDate()}. ${d.getUTCMonth() + 1}.` : `${String(d.getUTCHours()).padStart(2, "0")}:00`;
+      h += `<text x="${X(t)}" y="${H - 6}" text-anchor="middle">${label}</text>`;
+    }
+    // Bars side by side within a bucket, with a 2px gap.
+    const bw = Math.max(1, (X(t0 + bucketMs) - X(t0)) / Math.max(bars.length, 1) - 2);
+    bars.forEach((s, k) => s.values.forEach((v, i) => {
+      if (v == null || v === 0) return;
+      const x = X(xs[i]) + 1 + k * (bw + 2), y = Math.min(Y(v), Y(0)), hgt = Math.abs(Y(v) - Y(0));
+      h += `<rect x="${x}" y="${y}" width="${bw}" height="${Math.max(hgt, 1)}" rx="${Math.min(2, bw / 2)}" fill="${s.color}" opacity="${s.dash ? 0.45 : 1}"/>`;
+    }));
+    // Lines, broken where a bucket is missing.
+    const half = bars.length ? bucketMs / 2 : 0;
+    for (const s of series.filter(s => s.type !== "bar")) {
+      let d = "", prev = null;
+      s.values.forEach((v, i) => {
+        if (v == null) { prev = null; return; }
+        const gap = prev != null && xs[i] - xs[prev] > bucketMs * 1.5;
+        d += `${prev == null || gap ? "M" : "L"}${X(xs[i] + half).toFixed(1)},${Y(v).toFixed(1)}`;
+        prev = i;
+      });
+      h += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"${s.dash ? ' stroke-dasharray="5 4"' : ""}/>`;
+    }
+    h += `<line class="hover" y1="${T}" y2="${H - B}" stroke="#9aa0ad" stroke-width="1" stroke-dasharray="3 3" style="display:none"/>`;
+    h += `<g class="dots"></g>`;
+    svg.innerHTML = h;
+
+    // Crosshair and tooltip at the nearest bucket.
+    const line = svg.querySelector(".hover"), dots = svg.querySelector(".dots");
+    svg.onpointermove = e => {
+      const r = svg.getBoundingClientRect(), px = e.clientX - r.left;
+      let best = 0;
+      xs.forEach((t, i) => { if (Math.abs(X(t + half) - px) < Math.abs(X(xs[best] + half) - px)) best = i; });
+      const present = series.filter(s => s.values[best] != null);
+      if (!present.length) { svg.onpointerleave(); return; }
+      const x = X(xs[best] + half);
+      line.setAttribute("x1", x); line.setAttribute("x2", x); line.style.display = "";
+      dots.innerHTML = present.filter(s => s.type !== "bar").map(s =>
+        `<circle cx="${x}" cy="${Y(s.values[best])}" r="4" fill="${s.color}" stroke="${css("--bg")}" stroke-width="2"/>`).join("");
+      tip.innerHTML = `<b>${bucketLabel(opts.x[best], opts.unit)}</b>` + present.map(s =>
+        `<div><i style="background:${s.color}"></i>${esc(s.name)}<em>${fmt(s.values[best])}</em></div>`).join("");
+      tip.style.display = "block";
+      const left = x + 14 + tip.offsetWidth > W ? x - 14 - tip.offsetWidth : x + 14;
+      tip.style.left = `${Math.max(0, left)}px`;
+      tip.style.top = `${T}px`;
+    };
+    svg.onpointerleave = () => { line.style.display = "none"; dots.innerHTML = ""; tip.style.display = "none"; };
+  }
+  draw();
+  charts.set(el, draw);
+}
+const charts = new Map();   // element → redraw, for window resizes
+let resizeTimer;
+addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => charts.forEach(f => f()), 150); });
+
+// A small horizontal bar of a share 0–1.
+const meter = (share, color = "var(--blue)") => share == null ? "" :
+  `<span class="meter"><i style="width:${Math.max(0, Math.min(1, share)) * 100}%;background:${color}"></i></span>`;
+
+// ------------------------------------------------------------- sections ---
+
+let days = 7;
+let lines = {};             // KORDIS LineID → {short, long, type, color, text}
+let lot = "";               // selected car park ("" = all)
+
+// Fetch one API answer; throws with the status on failure.
+async function get(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+// Fill a section from its loader; an error message replaces it when the database fails.
+async function load(name, fn) {
+  const body = document.querySelector(`[data-body="${name}"]`);
+  try {
+    await fn(body);
+  } catch (e) {
+    console.error(name, e);
+    body.innerHTML = `<div class="err">Data se teď nepodařilo načíst${e.message === "503" ? " – databáze není dostupná" : ""}. Zkuste to prosím později.</div>`;
+  }
+}
+
+// A line number as a badge in the line's colours.
+function lineBadge(id) {
+  const l = lines[id];
+  return l ? `<span class="badge" style="background:${l.color || "#777"};color:${l.text || "#fff"}">${esc(l.short)}</span>`
+           : `<span class="badge" style="background:var(--soft)">${id}</span>`;
+}
+
+const SECTIONS = {
+  async delays(body) {
+    const d = await get(`/api/stats/delays?days=${days}`);
+    if (!d.series.length) { body.innerHTML = `<p class="empty">Za toto období zatím nejsou žádné záznamy o zpoždění.</p>`; return; }
+    let sum = 0, n = 0, late = 0;
+    for (const [, modes] of d.series) for (const [s, c, l] of Object.values(modes)) { sum += s; n += c; late += l; }
+    const present = MODES.filter(([m]) => d.series.some(([, ms]) => ms[m]));
+    const share = d.series.map(([, ms]) => {
+      const t = Object.values(ms).reduce((a, [, c, l]) => [a[0] + c, a[1] + l], [0, 0]);
+      return t[0] ? t[1] / t[0] : null;
+    });
+    body.innerHTML = `
+      <div class="tiles">
+        <div class="tile"><b>${num(sum / n, 1)} min</b><span>průměrné zpoždění</span></div>
+        <div class="tile"><b>${pct(late / n)}</b><span>záznamů se zpožděním 3 min a víc</span></div>
+        <div class="tile"><b>${d.lines[0] ? lineBadge(d.lines[0].line) : "–"}</b><span>nejvíc zpožděná linka${d.lines[0] ? ` (${num(d.lines[0].avg, 1)} min)` : ""}</span></div>
+        <div class="tile"><b>${NUM.format(n)}</b><span>záznamů</span></div>
+      </div>
+      <h3>Průměrné zpoždění podle druhu dopravy</h3><div id="chDelay"></div>
+      <h3>Podíl záznamů se zpožděním 3 min a víc</h3><div id="chLate"></div>
+      <h3>Nejvíc zpožděné linky</h3>
+      <div class="tbl"><table>
+        <tr><th>Linka</th><th>Trasa</th><th class="n">Průměr</th><th class="n">Zpožděno 3+ min</th><th class="n">Vozidel</th></tr>
+        ${d.lines.map(r => `<tr><td>${lineBadge(r.line)}</td><td>${esc(lines[r.line]?.long || "")}</td>
+          <td class="n">${num(r.avg, 1)} min</td><td class="n">${meter(r.late, "var(--orange)")}${pct(r.late)}</td><td class="n">${r.vehicles}</td></tr>`).join("")}
+      </table></div>
+      <p class="note">Vozidlo se zaznamená pokaždé, když se změní jeho zpoždění, linka nebo poslední zastávka, takže jde o průměr přes záznamy, ne přes čas.
+        Hodnoty mimo −30 až 120 minut jsou vynechané jako chyby zdroje. ${d.days.length ? `Uložené dny: ${d.days.map(x => `${x.day.slice(8)}. ${+x.day.slice(5, 7)}. (${x.source})`).join(", ")}.` : ""}</p>`;
+    const x = d.series.map(([b]) => b);
+    timeChart($("#chDelay"), {
+      x, unit: d.unit, label: "Průměrné zpoždění podle druhu dopravy", zero: true, format: v => `${num(v, 1)} min`,
+      series: present.map(([m, name]) => ({name, color: css(`--mode-${m}`), values: d.series.map(([, ms]) => ms[m] ? ms[m][0] / ms[m][1] : null)})),
+    });
+    timeChart($("#chLate"), {x, unit: d.unit, small: true, zero: true, label: "Podíl záznamů se zpožděním", format: pct,
+      series: [{name: "Zpožděno 3+ min", color: css("--orange"), values: share}]});
+  },
+
+  async diversions(body) {
+    const d = await get("/api/stats/diversions");
+    if (!d.length) { body.innerHTML = `<p class="empty">Žádné zveřejněné výluky.</p>`; return; }
+    const item = r => `<div class="item"><h4>${esc(r.title || r.stop || "Výluka")}</h4>
+      <div class="meta">${r.lines.length ? `Linky ${r.lines.map(esc).join(", ")} · ` : ""}${period(r.from, r.to)}</div>
+      ${r.text ? `<p>${esc(r.text.length > 320 ? r.text.slice(0, 320) + "…" : r.text)}</p>` : ""}</div>`;
+    body.innerHTML = `<p class="sub">${d.length} zveřejněných výluk a omezení.</p>
+      <div class="list">${d.slice(0, 8).map(item).join("")}</div>
+      ${d.length > 8 ? `<details class="more"><summary>Zobrazit dalších ${d.length - 8}</summary><div class="list" style="margin-top:10px">${d.slice(8).map(item).join("")}</div></details>` : ""}`;
+  },
+
+  async weather(body) {
+    const d = await get(`/api/stats/weather?days=${days}`);
+    const now = d.now;
+    const temps = d.sites.map(s => s.temperature).filter(t => t != null);
+    const precip = d.hours.reduce((a, h) => a + (h[2] || 0), 0);
+    body.innerHTML = `
+      <div class="tiles">
+        <div class="tile"><b>${now ? num(now.temperature, 1) + " °C" : "–"}</b><span>${now ? esc(now.text || "teď") + `, ${bucketLabel(now.time, "hour").split(" ").pop()}` : "teď"}</span></div>
+        <div class="tile"><b>${now ? num(now.wind, 0) + " km/h" : "–"}</b><span>vítr${now?.humidity != null ? `, vlhkost ${num(now.humidity)} %` : ""}</span></div>
+        <div class="tile"><b>${num(precip, 1)} mm</b><span>srážky za zvolené období</span></div>
+        <div class="tile"><b>${temps.length ? `${num(Math.min(...temps), 1)} až ${num(Math.max(...temps), 1)} °C` : "–"}</b><span>na stanovištích ve městě</span></div>
+      </div>
+      <div class="grid2">
+        <div><h3>Teplota</h3><div id="chTemp"></div></div>
+        <div><h3>Srážky</h3><div id="chRain"></div></div>
+      </div>
+      <p class="note">Plná čára a sytě vybarvené sloupce jsou naměřené hodnoty, přerušovaná čára a světlé sloupce předpověď${d.issued ? ` vydaná ${when(d.issued)}` : ""}.</p>
+      <h3>Teplota vzduchu ve městě</h3>
+      ${d.sites.length ? `<div class="tbl"><table><tr><th>Stanoviště</th><th>Městská část</th><th class="n">Teplota</th><th class="n">Změřeno</th></tr>
+        ${d.sites.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(s.district || "")}</td><td class="n">${num(s.temperature, 1)} °C</td><td class="n">${ago(s.time)}</td></tr>`).join("")}
+      </table></div>` : `<p class="empty">Žádná měření za poslední den.</p>`}`;
+    const x = [...d.hours.map(h => h[0]), ...d.forecast.map(f => f[0])];
+    const past = d.hours.length, pad = (a, before, after) => [...Array(before).fill(null), ...a, ...Array(after).fill(null)];
+    const fc = d.forecast.length;
+    // The forecast line starts at the last measured hour, so the two lines join.
+    const fcTemp = pad(d.forecast.map(f => f[1]), past, 0);
+    if (past && fc) fcTemp[past - 1] = d.hours[past - 1][1];
+    const temp = css("--orange"), rain = css("--blue");
+    timeChart($("#chTemp"), {x, unit: "hour", label: "Teplota", format: v => `${num(v, 1)} °C`, legend: fc > 0,
+      series: [{name: "Naměřeno", color: temp, values: pad(d.hours.map(h => h[1]), 0, fc)},
+               {name: "Předpověď", color: temp, dash: true, values: fcTemp}]});
+    timeChart($("#chRain"), {x, unit: "hour", label: "Srážky", format: v => `${num(v, 1)} mm`, legend: fc > 0,
+      series: [{name: "Naměřeno", color: rain, type: "bar", values: pad(d.hours.map(h => h[2]), 0, fc)},
+               {name: "Předpověď", color: rain, type: "bar", dash: true, values: pad(d.forecast.map(f => f[2]), past, 0)}]});
+  },
+
+  async parking(body) {
+    const d = await get(`/api/stats/parking?days=${days}&lot=${encodeURIComponent(lot)}`);
+    if (!d.lots.length && !d.series.length) { body.innerHTML = `<p class="empty">Zatím žádná data o parkovištích.</p>`; return; }
+    const free = d.lots.reduce((a, r) => a + (r.free || 0), 0), cap = d.lots.reduce((a, r) => a + (r.capacity || 0), 0);
+    body.innerHTML = `
+      <div class="tiles">
+        <div class="tile"><b>${NUM.format(free)}</b><span>volných míst teď</span></div>
+        <div class="tile"><b>${cap ? pct(1 - free / cap) : "–"}</b><span>obsazeno</span></div>
+        <div class="tile"><b>${d.lots.length}</b><span>parkovišť</span></div>
+        <div class="tile"><b>${d.lots.filter(r => r.capacity && r.free != null && r.free / r.capacity < 0.05).length}</b><span>skoro plných (pod 5 % volných)</span></div>
+      </div>
+      <h3>Volná místa v čase</h3>
+      <p><select id="lotSel" aria-label="Parkoviště"><option value="">Všechna parkoviště</option>${d.lots.map(r =>
+        `<option${r.lot === lot ? " selected" : ""}>${esc(r.lot)}</option>`).join("")}</select></p>
+      <div id="chPark"></div>
+      <h3>Parkoviště teď</h3>
+      <div class="tbl"><table><tr><th>Parkoviště</th><th class="n">Volno</th><th class="n">Kapacita</th><th class="n">Obsazeno</th><th class="n">Aktualizace</th></tr>
+        ${d.lots.map(r => {
+          const occ = r.capacity && r.free != null ? 1 - r.free / r.capacity : null;
+          return `<tr><td>${esc(r.lot)}</td><td class="n">${num(r.free)}</td><td class="n">${num(r.capacity)}</td>
+            <td class="n">${meter(occ, occ > 0.95 ? "var(--orange)" : "var(--blue)")}${pct(occ)}</td><td class="n">${ago(r.time)}</td></tr>`;
+        }).join("")}
+      </table></div>`;
+    $("#lotSel").onchange = e => { lot = e.target.value; load("parking", SECTIONS.parking); };
+    timeChart($("#chPark"), {x: d.series.map(r => r[0]), unit: d.unit, zero: true, label: "Volná místa v čase", format: v => num(v),
+      series: [{name: "Volná místa", color: css("--blue"), values: d.series.map(r => r[1])},
+               {name: "Kapacita", color: css("--gray"), dash: true, values: d.series.map(r => r[2])}]});
+  },
+
+  async counts(body) {
+    const d = await get(`/api/stats/counts?days=${days}`);
+    if (!d.series.length) { body.innerHTML = `<p class="empty">Za toto období zatím nejsou data ze sčítačů.</p>`; return; }
+    const cyc = d.series.reduce((a, r) => a + (r[1] || 0), 0), ped = d.series.reduce((a, r) => a + (r[2] || 0), 0);
+    body.innerHTML = `
+      <div class="tiles">
+        <div class="tile"><b>${NUM.format(cyc)}</b><span>cyklistů</span></div>
+        <div class="tile"><b>${NUM.format(ped)}</b><span>chodců</span></div>
+        <div class="tile"><b>${d.places[0] ? esc(d.places[0].name) : "–"}</b><span>nejvytíženější místo</span></div>
+        <div class="tile"><b>${d.source === "live" ? "živá data" : "archiv"}</b><span>zdroj</span></div>
+      </div>
+      <h3>Počty ${d.unit === "day" ? "za den" : "za hodinu"}</h3><div id="chCount"></div>
+      <h3>Nejvytíženější místa</h3>
+      <div class="tbl"><table><tr><th>Místo</th><th class="n">Cyklisté</th><th class="n">Chodci</th></tr>
+        ${d.places.map(p => `<tr><td>${esc(p.name)}</td><td class="n">${num(p.cyclists)}</td><td class="n">${num(p.pedestrians)}</td></tr>`).join("")}
+      </table></div>
+      <p class="note">Sčítače posílají data se zpožděním, poslední hodiny proto mohou chybět.</p>`;
+    timeChart($("#chCount"), {x: d.series.map(r => r[0]), unit: d.unit, zero: true, label: "Cyklisté a chodci", format: v => num(v),
+      series: [{name: "Cyklisté", color: css("--blue"), values: d.series.map(r => r[1])},
+               {name: "Chodci", color: css("--orange"), values: d.series.map(r => r[2])}]});
+  },
+
+  async city(body) {
+    const d = await get("/api/stats/city");
+    const venue = v => {
+      const share = v.capacity && v.present != null ? v.present / v.capacity : null;
+      return `<tr><td>${esc(v.venue)}</td><td class="n">${num(v.present)}</td><td class="n">${num(v.capacity)}</td>
+        <td class="n">${meter(share)}${pct(share)}</td><td class="n">${num(v.today)}</td></tr>`;
+    };
+    body.innerHTML = `
+      <h3>Koupaliště, kluziště a wellness</h3>
+      ${d.venues.length ? `<div class="tbl"><table><tr><th>Sportoviště</th><th class="n">Teď uvnitř</th><th class="n">Kapacita</th><th class="n">Zaplněno</th><th class="n">Dnes celkem</th></tr>
+        ${d.venues.map(venue).join("")}</table></div>
+        <p class="note">Aktualizováno ${ago(d.venues.reduce((a, v) => v.time > a ? v.time : a, ""))}.</p>` : `<p class="empty">Žádná aktuální data.</p>`}
+      <div class="grid2">
+        <div>
+          <h3>Odstávky vody</h3>
+          ${d.outages.length ? `<div class="list">${d.outages.map(o => `<div class="item"><h4>${esc(o.place || "Odstávka")}</h4>
+            <div class="meta">${period(o.from, o.to)}${o.restricted ? " · omezení dodávky" : ""}</div>
+            ${o.replacement ? `<p>Náhradní zásobování: ${esc(o.replacement)}</p>` : ""}${o.note ? `<p>${esc(o.note)}</p>` : ""}</div>`).join("")}</div>`
+            : `<p class="empty">Žádné ohlášené odstávky.</p>`}
+        </div>
+        <div>
+          <h3>Dnešní akce${d.event_count ? ` (${d.event_count})` : ""}</h3>
+          ${d.events.length ? `<div class="list">${d.events.map(e => `<div class="item"><h4>${e.url ? `<a href="${esc(e.url)}" rel="noopener" target="_blank">${esc(e.name)}</a>` : esc(e.name)}</h4>
+            <div class="meta">${esc(e.categories || "")}${e.categories ? " · " : ""}${period(e.from, e.to, true)}</div></div>`).join("")}</div>
+            ${d.event_count > d.events.length ? `<p class="note">A dalších ${d.event_count - d.events.length}.</p>` : ""}`
+            : `<p class="empty">Dnes žádné akce.</p>`}
+        </div>
+      </div>`;
+  },
+
+  async status(body) {
+    const d = await get("/api/stats/status");
+    if (!d.length) { body.innerHTML = `<p class="empty">Sběr dat zatím neproběhl.</p>`; return; }
+    body.innerHTML = `<div class="tbl"><table>
+      <tr><th>Úloha</th><th>Výsledek</th><th class="n">Poslední běh</th><th class="n">Řádků</th><th class="n">Nejnovější data</th><th>Chyba</th></tr>
+      ${d.map(r => `<tr><td>${esc(r.job)}</td>
+        <td>${r.ok ? `<span class="ok">✓ v pořádku</span>` : r.ok === false ? `<span class="fail">✕ chyba</span>` : "běží…"}</td>
+        <td class="n">${ago(r.started)}</td><td class="n">${r.rows == null ? "–" : NUM.format(r.rows)}</td>
+        <td class="n">${when(r.source_time)}</td><td>${esc(r.error || "")}</td></tr>`).join("")}
+    </table></div>`;
+  },
+};
+
+// Load the sections that depend on the period (or all of them on the first load).
+function loadAll(onlyPeriod) {
+  for (const name of ["delays", "weather", "parking", "counts"]) {
+    document.querySelector(`[data-body="${name}"]`).innerHTML = `<p class="loading">Načítám…</p>`;
+    load(name, SECTIONS[name]);
+  }
+  if (!onlyPeriod) for (const name of ["diversions", "city", "status"]) load(name, SECTIONS[name]);
+}
+
+// Period buttons; the period is kept in the address (?dny=30).
+function setDays(n, push) {
+  days = n;
+  document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.days === n)));
+  if (push) {
+    const url = new URL(location);
+    n === 7 ? url.searchParams.delete("dny") : url.searchParams.set("dny", n);
+    history.replaceState(null, "", url);
+  }
+}
+document.querySelectorAll(".seg button").forEach(b => b.onclick = () => {
+  if (+b.dataset.days === days) return;
+  setDays(+b.dataset.days, true);
+  charts.clear();
+  loadAll(true);
+});
+
+(async () => {
+  const fromUrl = +new URLSearchParams(location.search).get("dny");
+  setDays([1, 7, 30].includes(fromUrl) ? fromUrl : 7, false);
+  try { lines = (await get("/api/stats/meta")).lines; } catch (e) { /* lines stay unnamed */ }
+  loadAll(false);
+})();
+</script>
+{% endif %}
+</body>
+</html>

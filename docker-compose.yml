@@ -15,6 +15,12 @@ services:
       - UMAMI_DOMAINS=${UMAMI_DOMAINS:-}
       - UMAMI_RECORDER=${UMAMI_RECORDER:-false}
       - UMAMI_FRAME_ANCESTORS=${UMAMI_FRAME_ANCESTORS:-}
+      # The collector's history database, for the statistics page (/statistiky); read-only connections.
+      - PGHOST=db
+      - PGPORT=5432
+      - PGUSER=${POSTGRES_USER:-brno}
+      - PGPASSWORD=${POSTGRES_PASSWORD}
+      - PGDATABASE=${POSTGRES_DB:-brno}
     # Downloaded timetable versions and caches survive restarts and redeploys.
     volumes:
       - idsjmk-data:/app/data

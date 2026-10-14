@@ -12,6 +12,7 @@ Environment:
   CACHE_DIR                   downloaded feeds + derived caches (default ./ or /app/data)
   LIVE                        live map of vehicles with their delays, /zive (default true)
   LIVE_TRAFFIC                car traffic and road closures from dopravniinfo.cz on it (default true)
+  DATABASE_URL or PGHOST, …   the collector's history database, for /statistiky (optional)
 """
 import argparse
 import gzip
@@ -32,6 +33,7 @@ from gtfs_loader import load_network
 from gtfs_update import DEFAULT_URL, FeedStore
 from live import STOPPED_AT, LiveState
 from reach import Reachability
+import stats
 from timetable import Timetable
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -477,6 +479,106 @@ def api_live_traffic():
     """Car traffic now: {segment id: [speed / free-flow speed, delay s]}."""
     lv = _live()
     return jsonify({"stamp": lv.traffic_stamp, "segs": {sid: list(t) for sid, t in lv.traffic.items()}})
+
+
+# --------------------------------------------------------------- history ---
+
+history: stats.History = None
+_history_lock = threading.Lock()
+
+
+def _history() -> stats.History:
+    """The history database, connected on first use; 404 when it is not configured."""
+    global history
+    if not stats.configured():
+        abort(404, "the history database is not configured (DATABASE_URL or PGHOST)")
+    with _history_lock:
+        if history is None:
+            history = stats.History()
+    return history
+
+
+def _days() -> int:
+    """The ``days`` query parameter: 1, 7 or 30."""
+    days = request.args.get("days", default=7, type=int)
+    if days not in stats.RANGES:
+        abort(400, "days must be 1, 7 or 30")
+    return days
+
+
+@app.errorhandler(503)
+def unavailable(e):
+    """The history database is down or a query took too long."""
+    return jsonify({"error": "unavailable", "detail": e.description}), 503
+
+
+def _query(fn, *args):
+    """Run a history query; a database error becomes 503 so the page can say so per section."""
+    h = _history()
+    try:
+        return jsonify(fn(h, *args))
+    except Exception as exc:
+        import psycopg
+        import psycopg_pool
+        if isinstance(exc, (psycopg.Error, psycopg_pool.PoolTimeout)):
+            print(f"History query failed: {type(exc).__name__}: {exc}", flush=True)
+            abort(503, "the history database is not available")
+        raise
+
+
+@app.route("/statistiky")
+def stats_page():
+    """Statistics from the collected history: delays, weather, parking, counters and the city."""
+    return render_template("stats.html", agency=state.network["agency"], enabled=stats.configured())
+
+
+@app.route("/api/stats/meta")
+def api_stats_meta():
+    """Lines of the current timetable by KORDIS LineID, to name the lines in the delay statistics."""
+    return jsonify({"lines": _lines()})
+
+
+@app.route("/api/stats/status")
+def api_stats_status():
+    """Last run of every collector job."""
+    return _query(stats.History.status)
+
+
+@app.route("/api/stats/delays")
+def api_stats_delays():
+    """Delays of IDS JMK vehicles over time by mode, and the most delayed lines."""
+    modes = {line: r["type"] for line, r in _lines().items()}
+    return _query(stats.History.delays, _days(), modes)
+
+
+@app.route("/api/stats/diversions")
+def api_stats_diversions():
+    """Current IDS JMK diversions and closures."""
+    return _query(stats.History.diversions)
+
+
+@app.route("/api/stats/weather")
+def api_stats_weather():
+    """Hourly weather, the latest forecast and air temperature at the Teplárny Brno sites."""
+    return _query(stats.History.weather, _days())
+
+
+@app.route("/api/stats/parking")
+def api_stats_parking():
+    """Car parks now and free spaces over time (``lot`` = one car park, default all)."""
+    return _query(stats.History.parking, _days(), request.args.get("lot") or None)
+
+
+@app.route("/api/stats/counts")
+def api_stats_counts():
+    """Cyclists and pedestrians at the counting cameras."""
+    return _query(stats.History.counts, _days())
+
+
+@app.route("/api/stats/city")
+def api_stats_city():
+    """Swimming pools and ice rinks, water outages and today's events."""
+    return _query(stats.History.city)
 
 
 def _off(name: str) -> bool:
