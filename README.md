@@ -278,7 +278,7 @@ git push -u origin main
 
 1. **Create Service → Compose**, same repository, Compose Path `./docker-compose.yml`.
 2. Under **Domains**, choose the `idsjmk-map` service and port `8000`.
-3. Under **Environment**, set `POSTGRES_PASSWORD` (required, letters and digits). The compose file also runs the history collector and its PostgreSQL database (see *9. History collector*).
+3. Under **Environment**, set `POSTGRES_PASSWORD` (required; avoid `$`). Set it, and `POSTGRES_USER` / `POSTGRES_DB` if you change them, **before the first deploy**: the database is created with them once, and later changes have no effect (see *Password authentication failed* in section 9). The compose file also runs the history collector and its PostgreSQL database (see *9. History collector*).
 4. Optionally set the `UMAMI_*` variables (see `.env.example`) under **Environment**; the compose file passes them to the container.
 
 ### After deploying
@@ -422,11 +422,27 @@ Every run is logged in the `collector_run` table: job, start, end, success, rows
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DATABASE_URL` | *(required)* | PostgreSQL connection string; compose builds it from `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` |
+| `DATABASE_URL` | *(empty)* | PostgreSQL connection string; when empty, the standard `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` are used. Compose sets those from `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB`, so the password needs no URL encoding |
 | `COLLECTOR_DISABLE` | *(empty)* | jobs to switch off, comma-separated |
 | `COLLECTOR_INTERVAL_<JOB>` | per job | seconds between runs of a job, e.g. `COLLECTOR_INTERVAL_PARKING=600` |
 | `KORDIS_RAW_DIR` | *(empty)* | keep the KORDIS archive's daily Parquet files in this folder (in compose, `/app/raw` is a volume) |
 
 **Backups.** The data cannot be downloaded again once the sources have moved on. Back up the database regularly, for example `docker compose exec db pg_dump -U brno -Fc brno > brno-$(date +%F).dump`, or with Dokploy's database backups.
+
+**Password authentication failed.** If the collector logs `password authentication failed for user "…"`, the database does not know that user or password. PostgreSQL says this also when the user does not exist. The postgres image creates `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` only on the first start with an empty data volume. Changing them in Dokploy afterwards changes what the collector sends, not the database. Two ways out:
+
+- **The database holds no data yet** (the collector never got in): stop the compose service, remove the volume and deploy again; the database is then created with the current values.
+  ```bash
+  docker volume ls | grep brno-pgdata        # Dokploy prefixes the name with the project
+  docker volume rm <name-from-the-list>
+  ```
+- **Keep the data:** change the role inside the database container. Connections over the container's local socket need no password. Use the user of the first deployment (`brno` unless you set another one):
+  ```bash
+  docker ps --format '{{.Names}}' | grep db  # the database container
+  docker exec -it <db-container> psql -U brno -d postgres -c '\du'     # existing roles
+  docker exec -it <db-container> psql -U brno -d postgres \
+    -c "ALTER ROLE brno PASSWORD 'the-current-POSTGRES_PASSWORD'"
+  ```
+  Then set `POSTGRES_USER` back to that user in Dokploy, or create the new one: `CREATE ROLE "data-brno-dokploy" LOGIN SUPERUSER PASSWORD '…'` (and `CREATE DATABASE … OWNER …` if `POSTGRES_DB` changed too).
 
 **Sources and licences.** data.brno.cz (Statutární město Brno, CC BY), KORDIS JMK, Brněnské vodárny a kanalizace, TIC Brno, Technické sítě Brno, Teplárny Brno, Open-Meteo (CC BY 4.0). Anyone publishing data derived from the collected history must credit these sources.

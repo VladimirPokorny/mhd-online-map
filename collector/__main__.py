@@ -13,6 +13,12 @@ from .jobs import all_jobs
 
 log = logging.getLogger("collector")
 
+AUTH_HINT = ("The database rejects the user or password. PostgreSQL also says this when the user does not exist. "
+             "The postgres image creates POSTGRES_USER and POSTGRES_PASSWORD only on the first start with an empty "
+             "data volume; changing them later has no effect. Either set them back to the values of the first "
+             "deployment, change the role inside the db container (see README, 'Password authentication failed'), "
+             "or remove the brno-pgdata volume if it holds no data yet.")
+
 
 def _hold_instance_lock(url: str, stop: threading.Event) -> psycopg.Connection:
     """Take the advisory lock that makes this the only running collector; wait while another one holds it."""
@@ -133,7 +139,10 @@ def main(argv=None) -> int:
             except psycopg.OperationalError as exc:
                 if attempt == 29:
                     raise
-                log.warning("database not reachable (%s); retrying", str(exc).strip().splitlines()[0])
+                message = str(exc).strip().splitlines()[0]
+                if "password authentication failed" in message and attempt % 6 == 0:
+                    log.error(AUTH_HINT)
+                log.warning("database not reachable (%s); retrying", message)
                 time.sleep(5)
         if args.command == "migrate":
             return 0

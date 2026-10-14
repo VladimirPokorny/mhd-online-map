@@ -45,7 +45,12 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "collector", "run"]
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-brno}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-brno}
+      # libpq's own variables: no URL encoding, so the password may contain any character.
+      - PGHOST=db
+      - PGPORT=5432
+      - PGUSER=${POSTGRES_USER:-brno}
+      - PGPASSWORD=${POSTGRES_PASSWORD}
+      - PGDATABASE=${POSTGRES_DB:-brno}
       - COLLECTOR_DISABLE=${COLLECTOR_DISABLE:-}
       - KORDIS_RAW_DIR=${KORDIS_RAW_DIR:-}
     volumes:

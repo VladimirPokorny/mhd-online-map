@@ -8,11 +8,16 @@ USER_AGENT = "brno-history-collector/1.0 (open data history)"
 
 
 def database_url() -> str:
-    """PostgreSQL connection string, e.g. postgresql://user:password@db:5432/brno."""
+    """PostgreSQL connection: DATABASE_URL, or "" to let libpq read PGHOST, PGUSER, PGPASSWORD, PGDATABASE.
+
+    The PG* variables need no URL encoding, so any password works; compose uses them."""
     url = os.environ.get("DATABASE_URL", "").strip()
-    if not url:
-        raise SystemExit("DATABASE_URL is not set (e.g. postgresql://brno:secret@localhost:5432/brno)")
-    return url
+    if url:
+        return url
+    if os.environ.get("PGHOST", "").strip():
+        return ""
+    raise SystemExit("set DATABASE_URL (e.g. postgresql://brno:secret@localhost:5432/brno) "
+                     "or PGHOST, PGUSER, PGPASSWORD and PGDATABASE")
 
 
 def kordis_raw_dir() -> Path | None:
