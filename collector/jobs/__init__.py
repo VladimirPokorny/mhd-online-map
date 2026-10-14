@@ -27,6 +27,7 @@ class Job:
 
 def all_jobs() -> list[Job]:
     """Every job, in the order they start."""
+    from .chmi import Chmi
     from .city import CityEvents, WaterOutages
     from .counters import BikeCountsHistory, BikeCountsLive, TsbCounts
     from .kordis import KordisArchive, KordisStream
@@ -34,5 +35,5 @@ def all_jobs() -> list[Job]:
     from .transport import IdsDiversions
     from .venues import Venues
     from .weather import Temperatures, Weather
-    return [Parking(), Venues(), Temperatures(), BikeCountsLive(), Weather(), IdsDiversions(), WaterOutages(),
+    return [Parking(), Venues(), Temperatures(), BikeCountsLive(), Weather(), Chmi(), IdsDiversions(), WaterOutages(),
             CityEvents(), KordisStream(), KordisArchive(), BikeCountsHistory(), TsbCounts()]

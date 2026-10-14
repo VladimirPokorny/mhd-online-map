@@ -192,6 +192,61 @@ class History:
             }
         return self._cached(("weather", days), compute)
 
+    def chmi(self, days: int) -> dict:
+        """Measurements of the ČHMÚ stations in Brno: latest values, hourly series and daily rainfall.
+
+        Hourly series sit at the full hour, like Open-Meteo's: temperature, humidity, dew point,
+        pressure and cloud cover as measured then; wind as the mean and the strongest gust of the
+        hour before; rain as the hour's total."""
+        def compute():
+            params = {"unit": "hour", "days": days}
+            stations = self._rows("SELECT station, name, elevation, lat, lon FROM chmi_station ORDER BY station")
+            hourly = self._rows(f"""
+                SELECT date_trunc('hour', observed_at + interval '50 minutes') AT TIME ZONE 'Europe/Prague',
+                       station, element,
+                       CASE element WHEN 'Fmax' THEN max(value) WHEN 'SRA1H' THEN sum(value) ELSE avg(value) END
+                FROM chmi_value
+                WHERE observed_at >= {SINCE} AND observed_at <= now()
+                  AND ((period = '10m' AND element IN ('F', 'Fmax'))
+                       OR (period = '10m' AND element IN ('T', 'H') AND extract(minute FROM observed_at) = 0)
+                       OR (period = '1h' AND element IN ('Td', 'P_hm', 'N', 'SRA1H')))
+                GROUP BY 1, 2, 3 ORDER BY 1""", params)
+            # Daily rainfall is read at 06:00 UTC (7:00 in winter) for the 24 hours before.
+            rain = self._rows("""
+                SELECT (observed_at AT TIME ZONE 'Europe/Prague')::date, station, value FROM chmi_value
+                WHERE period = '1d' AND element = 'SRA' AND observed_at >= now() - make_interval(days => %s)
+                ORDER BY 1""", (max(days, 7),))
+            latest = self._rows("""
+                SELECT DISTINCT ON (station, element) station, element, observed_at, value FROM chmi_value
+                WHERE observed_at > now() - interval '6 hours' AND period IN ('10m', '1h')
+                  AND element IN ('T', 'H', 'F', 'Fmax', 'Td', 'P_hm', 'N', 'VV')
+                ORDER BY station, element, observed_at DESC""")
+            buckets = sorted({_local(b) for b, *_ in hourly})
+            index = {b: i for i, b in enumerate(buckets)}
+            series = {}
+            for b, station, element, value in hourly:
+                series.setdefault(f"{station}:{element}", [None] * len(buckets))[index[_local(b)]] = _num(value)
+            rain_days = sorted({d for d, _, _ in rain})
+            day_index = {d: i for i, d in enumerate(rain_days)}
+            rain_series = {}
+            for d, station, value in rain:
+                rain_series.setdefault(station, [None] * len(rain_days))[day_index[d]] = _num(value)
+            now = {}
+            for station, element, t, value in latest:
+                now.setdefault(station, {})[element] = _num(value)
+                now[station]["time"] = max(now[station].get("time") or "", _iso(t))
+            return {
+                "stations": [{"id": s, "name": name, "elevation": elev, "lat": lat, "lon": lon}
+                             for s, name, elev, lat, lon in stations],
+                "hours": buckets,
+                # "<station>:<element>" → values per hour (T, H, Td °C/%, P_hm hPa, N eighths, SRA1H mm, F/Fmax m/s)
+                "series": series,
+                "rain_days": [d.isoformat() + "T00:00" for d in rain_days],
+                "rain": rain_series,   # station → daily rainfall, mm
+                "now": now,            # station → {element: latest value, "time": newest}
+            }
+        return self._cached(("chmi", days), compute)
+
     # ------------------------------------------------------------- parking ---
 
     def parking(self, days: int, lot: str | None) -> dict:

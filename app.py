@@ -563,6 +563,12 @@ def api_stats_weather():
     return _query(stats.History.weather, _days())
 
 
+@app.route("/api/stats/chmi")
+def api_stats_chmi():
+    """Measurements of the ČHMÚ stations in Brno: latest values, hourly series, daily rainfall."""
+    return _query(stats.History.chmi, _days())
+
+
 @app.route("/api/stats/parking")
 def api_stats_parking():
     """Car parks now and free spaces over time (``lot`` = one car park, default all)."""

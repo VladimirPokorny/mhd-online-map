@@ -364,6 +364,7 @@ python app.py --update --build-only
 | `GET /statistiky` | statistics from the history database (Czech); `?dny=1\|7\|30` picks the period |
 | `GET /api/stats/delays?days=1\|7\|30` | average delay per hour (per day for 30) and mode, the 15 most delayed lines, stored days |
 | `GET /api/stats/weather?days=…` | hourly weather, the latest forecast, Teplárny Brno sites |
+| `GET /api/stats/chmi?days=…` | ČHMÚ stations in Brno: latest values, hourly series (`<station>:<element>`), daily rainfall per station |
 | `GET /api/stats/parking?days=…&lot=<name>` | car parks now and free spaces over time (all car parks without `lot`) |
 | `GET /api/stats/counts?days=…` | cyclists and pedestrians over time and the busiest places |
 | `GET /api/stats/diversions`, `/api/stats/city`, `/api/stats/status` | current diversions; pools, water outages and today's events; collector jobs |
@@ -397,6 +398,7 @@ Most live sources on data.brno.cz publish only the current state: free spaces in
 | `bikes_history` | the cameras' full hourly history since 2020 | 30 min | `bike_count` (source `history`) |
 | `tsb_counts` | Technické sítě Brno counting sensors (dam, Riviéra, …) since 2023 | 30 min | `tsb_count` |
 | `weather` | Open-Meteo for Brno: recent hours, the forecast as issued, reanalysis since 2020 | 1 h | `weather_hour`, `weather_forecast` |
+| `chmi` | ČHMÚ stations in Brno (opendata.chmi.cz): Tuřany and Žabovřesky every 10 minutes and hourly (temperature, humidity, wind, rain, sunshine, soil; Tuřany also dew point, sea-level pressure, cloud cover, visibility), Jundrov and Židenice daily rain and snow (published monthly, weeks late); the last 12 months on the first runs | 10 min | `chmi_station`, `chmi_element`, `chmi_series`, `chmi_observation` (view `chmi_value`) |
 | `diversions` | IDS JMK diversions, closures and moved stops | 1 h | `ids_diversion` |
 | `water` | water supply outages (BVK) | 1 h | `water_outage` |
 | `events` | cultural events (GoToBrno) | 6 h | `city_event` |

@@ -154,7 +154,7 @@
 
   <section id="pocasi">
     <h2>Počasí</h2>
-    <p class="sub">Hodinové hodnoty pro Brno (Open-Meteo) a teplota vzduchu na stanovištích Tepláren Brno.</p>
+    <p class="sub">Měření stanic ČHMÚ v Brně, předpověď Open-Meteo a teplota vzduchu na stanovištích Tepláren Brno.</p>
     <div data-body="weather"><p class="loading">Načítám…</p></div>
   </section>
 
@@ -186,7 +186,7 @@
 
 <footer>
   <div class="wrap">
-    Zdroje: KORDIS JMK, data.brno.cz, Open-Meteo, Teplárny Brno, STAREZ, Brněnské vodárny a kanalizace, GoToBrno ·
+    Zdroje: KORDIS JMK, data.brno.cz, Český hydrometeorologický ústav (ČHMÚ), Open-Meteo, Teplárny Brno, STAREZ, Brněnské vodárny a kanalizace, GoToBrno ·
     Data jízdního řádu: {{ agency }} · Nezávislá aplikace, není oficiálním produktem IDS JMK ani KORDIS JMK.
   </div>
 </footer>
@@ -283,12 +283,13 @@ function timeChart(el, opts) {
   function draw() {
     const W = svg.clientWidth, H = svg.clientHeight;
     if (!W) return;
-    const L = 44, R = 10, T = 8, B = 22;
     const vals = series.flatMap(s => s.values).filter(v => v != null);
     let lo = Math.min(...vals), hi = Math.max(...vals);
     if (opts.zero || bars.length) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
     const yt = ticks(lo, hi);
     lo = yt[0]; hi = yt[yt.length - 1];
+    // Room on the left for the longest axis label (11px digits are about 6.5px wide).
+    const L = Math.max(36, Math.max(...yt.map(v => fmt(v).length)) * 6.5 + 10), R = 10, T = 8, B = 22;
     // Bars stand in their bucket; lines sit at the bucket's start.
     const t0 = xs[0], t1 = xs[xs.length - 1] + (bars.length ? bucketMs : 0);
     const X = t => L + (t1 === t0 ? 0.5 : (t - t0) / (t1 - t0)) * (W - L - R);
@@ -388,6 +389,132 @@ function lineBadge(id) {
            : `<span class="badge" style="background:var(--soft)">${id}</span>`;
 }
 
+// ČHMÚ stations in Brno, in the fixed order of their chart colours.
+const TURANY = "0-20000-0-11723", ZABOVRESKY = "0-203-0-11721";
+const STATION_ORDER = [[TURANY, "--blue"], [ZABOVRESKY, "--orange"], ["0-203-0-41501153002", "--aqua"], ["0-203-0-41502109601", "--yellow"]];
+const stationColor = id => css((STATION_ORDER.find(([s]) => s === id) || [, "--gray"])[1]);
+// Cloud cover in eighths as words.
+const CLOUDS = ["jasno", "skoro jasno", "skoro jasno", "polojasno", "polojasno", "oblačno", "oblačno", "skoro zataženo", "zataženo"];
+
+// A list padded with empty values before and after.
+const pad = (a, before, after) => [...Array(before).fill(null), ...a, ...Array(after).fill(null)];
+// Forecast values placed after the measured ones; the forecast starts at the last measured value, so the lines join.
+function joined(forecast, measured) {
+  const out = pad(forecast, measured.length, 0);
+  const last = measured.length - 1;
+  if (last >= 0 && forecast.length) out[last] = measured[last];
+  return out;
+}
+
+// The Teplárny Brno sites table, shown under either weather view.
+const sitesTable = d => `<h3>Teplota vzduchu na stanovištích Tepláren Brno</h3>
+  ${d.sites.length ? `<div class="tbl"><table><tr><th>Stanoviště</th><th>Městská část</th><th class="n">Teplota</th><th class="n">Změřeno</th></tr>
+    ${d.sites.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(s.district || "")}</td><td class="n">${num(s.temperature, 1)} °C</td><td class="n">${ago(s.time)}</td></tr>`).join("")}
+  </table></div>` : `<p class="empty">Žádná měření za poslední den.</p>`}`;
+
+// Weather measured at the ČHMÚ stations, with the Open-Meteo forecast after it.
+function weatherStations(body, d, c) {
+  const name = id => (c.stations.find(s => s.id === id)?.name || id).replace(/^Brno, /, "");
+  const s = key => c.series[key] || c.hours.map(() => null);
+  const t = c.now[TURANY] || {}, z = c.now[ZABOVRESKY] || {};
+  const kmh = v => v == null ? null : v * 3.6;
+  const rainSum = s(`${TURANY}:SRA1H`).reduce((a, v) => a + (v || 0), 0);
+  const fc = d.forecast.length, n = c.hours.length;
+  const x = [...c.hours, ...d.forecast.map(f => f[0])];
+  const after = a => pad(a, 0, fc);
+  // The newest day with a reported rainfall of a station that reports only daily values.
+  const lastRainDay = id => {
+    const i = (c.rain[id] || []).findLastIndex(v => v != null);
+    return i < 0 ? "není v období" : `srážky za ${bucketLabel(c.rain_days[i], "day")}`;
+  };
+  body.innerHTML = `
+    <div class="tiles">
+      <div class="tile"><b>${num(t.T, 1)} °C</b><span>Tuřany${z.T != null ? ` · Žabovřesky ${num(z.T, 1)} °C` : ""}</span></div>
+      <div class="tile"><b>${num(t.Td, 1)} °C</b><span>rosný bod${t.H != null ? `, vlhkost ${num(t.H)} %` : ""}</span></div>
+      <div class="tile"><b>${num(t.P_hm, 1)} hPa</b><span>tlak přepočtený na hladinu moře</span></div>
+      <div class="tile"><b>${t.N == null ? "–" : t.N > 8 ? "mlha" : `${num(t.N)}/8`}</b><span>oblačnost${t.N != null && t.N <= 8 ? `: ${CLOUDS[Math.round(t.N)]}` : t.N > 8 ? ": obloha není vidět" : ""}</span></div>
+      <div class="tile"><b>${num(kmh(t.F))} km/h</b><span>vítr${t.Fmax != null ? `, nárazy ${num(kmh(t.Fmax))} km/h` : ""}</span></div>
+      <div class="tile"><b>${t.VV != null ? `${num(t.VV, t.VV < 10 ? 1 : 0)} km` : "–"}</b><span>dohlednost</span></div>
+      <div class="tile"><b>${num(rainSum, 1)} mm</b><span>srážky za zvolené období (Tuřany)</span></div>
+      <div class="tile"><b>${ago(t.time)}</b><span>poslední měření ČHMÚ</span></div>
+    </div>
+    <div class="grid2">
+      <div><h3>Teplota a rosný bod</h3><div id="chTemp"></div></div>
+      <div><h3>Srážky za hodinu</h3><div id="chRain"></div></div>
+      <div><h3>Tlak vzduchu (hladina moře)</h3><div id="chPress"></div></div>
+      <div><h3>Vítr</h3><div id="chWind"></div></div>
+      <div><h3>Relativní vlhkost</h3><div id="chHum"></div></div>
+      <div><h3>Oblačnost</h3><div id="chCloud"></div></div>
+    </div>
+    <h3>Denní srážky podle stanic</h3><div id="chDaily"></div>
+    <p class="note">Měření Českého hydrometeorologického ústavu. Teplota a vlhkost jsou hodnoty v celou hodinu, vítr průměr a nejsilnější náraz za předchozí hodinu.
+      Tlak, rosný bod a oblačnost měří jen Tuřany. Přerušovaná čára a světlé sloupce jsou předpověď Open-Meteo${d.issued ? ` vydaná ${when(d.issued)}` : ""}.
+      Denní srážky se odečítají ráno (6:00 UTC) za předchozích 24 hodin; srážkoměrné stanice Jundrov a Židenice posílají data jednou za měsíc.</p>
+    <h3>Stanice ČHMÚ v Brně</h3>
+    <div class="tbl"><table><tr><th>Stanice</th><th class="n">Nadm. výška</th><th class="n">Teplota</th><th class="n">Poslední měření</th></tr>
+      ${STATION_ORDER.map(([id]) => c.stations.find(st => st.id === id)).filter(Boolean).map(st => `<tr>
+        <td><i style="display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;background:${stationColor(st.id)}"></i>${esc(st.name)}</td>
+        <td class="n">${num(st.elevation)} m</td><td class="n">${c.now[st.id]?.T != null ? `${num(c.now[st.id].T, 1)} °C` : "jen srážky"}</td>
+        <td class="n">${c.now[st.id] ? ago(c.now[st.id].time) : lastRainDay(st.id)}</td></tr>`).join("")}
+    </table></div>
+    ${sitesTable(d)}`;
+  const deg = v => `${num(v, 1)} °C`;
+  timeChart($("#chTemp"), {x, unit: "hour", label: "Teplota a rosný bod", format: deg, series: [
+    {name: name(TURANY), color: stationColor(TURANY), values: after(s(`${TURANY}:T`))},
+    {name: name(ZABOVRESKY), color: stationColor(ZABOVRESKY), values: after(s(`${ZABOVRESKY}:T`))},
+    {name: "Rosný bod (Tuřany)", color: css("--pink"), values: after(s(`${TURANY}:Td`))},
+    {name: "Předpověď", color: css("--gray"), dash: true, values: joined(d.forecast.map(f => f[1]), s(`${TURANY}:T`))},
+  ]});
+  timeChart($("#chRain"), {x, unit: "hour", label: "Srážky za hodinu", format: v => `${num(v, 1)} mm`, legend: fc > 0, series: [
+    {name: "Tuřany", color: stationColor(TURANY), type: "bar", values: after(s(`${TURANY}:SRA1H`))},
+    {name: "Předpověď", color: stationColor(TURANY), type: "bar", dash: true, values: pad(d.forecast.map(f => f[2]), n, 0)},
+  ]});
+  timeChart($("#chPress"), {x: c.hours, unit: "hour", small: true, label: "Tlak vzduchu", format: v => `${num(v, 0)} hPa`,
+    series: [{name: "Tuřany", color: stationColor(TURANY), values: s(`${TURANY}:P_hm`)}]});
+  timeChart($("#chWind"), {x: c.hours, unit: "hour", small: true, zero: true, label: "Vítr", format: v => `${num(v, 0)} km/h`, series: [
+    {name: "Průměr", color: stationColor(TURANY), values: s(`${TURANY}:F`).map(kmh)},
+    {name: "Nárazy", color: stationColor(TURANY), dash: true, values: s(`${TURANY}:Fmax`).map(kmh)},
+  ]});
+  timeChart($("#chHum"), {x: c.hours, unit: "hour", small: true, label: "Relativní vlhkost", format: v => `${num(v, 0)} %`, series: [
+    {name: name(TURANY), color: stationColor(TURANY), values: s(`${TURANY}:H`)},
+    {name: name(ZABOVRESKY), color: stationColor(ZABOVRESKY), values: s(`${ZABOVRESKY}:H`)},
+  ]});
+  timeChart($("#chCloud"), {x: c.hours, unit: "hour", small: true, zero: true, label: "Oblačnost", format: v => `${num(v, 0)}/8`,
+    // 9 means the sky cannot be seen (fog), not an amount of cloud.
+    series: [{name: "Tuřany", color: css("--gray"), type: "bar", values: s(`${TURANY}:N`).map(v => v > 8 ? null : v)}]});
+  timeChart($("#chDaily"), {x: c.rain_days, unit: "day", label: "Denní srážky podle stanic", format: v => `${num(v, 1)} mm`,
+    series: STATION_ORDER.filter(([id]) => c.rain[id]).map(([id]) => ({name: name(id), color: stationColor(id), type: "bar", values: c.rain[id]}))});
+}
+
+// Weather from the Open-Meteo model only, while there are no ČHMÚ measurements.
+function weatherModel(body, d) {
+  const now = d.now;
+  const temps = d.sites.map(s => s.temperature).filter(t => t != null);
+  const precip = d.hours.reduce((a, h) => a + (h[2] || 0), 0);
+  body.innerHTML = `
+    <div class="tiles">
+      <div class="tile"><b>${now ? num(now.temperature, 1) + " °C" : "–"}</b><span>${now ? esc(now.text || "teď") + `, ${bucketLabel(now.time, "hour").split(" ").pop()}` : "teď"}</span></div>
+      <div class="tile"><b>${now ? num(now.wind, 0) + " km/h" : "–"}</b><span>vítr${now?.humidity != null ? `, vlhkost ${num(now.humidity)} %` : ""}</span></div>
+      <div class="tile"><b>${num(precip, 1)} mm</b><span>srážky za zvolené období</span></div>
+      <div class="tile"><b>${temps.length ? `${num(Math.min(...temps), 1)} až ${num(Math.max(...temps), 1)} °C` : "–"}</b><span>na stanovištích ve městě</span></div>
+    </div>
+    <div class="grid2">
+      <div><h3>Teplota</h3><div id="chTemp"></div></div>
+      <div><h3>Srážky</h3><div id="chRain"></div></div>
+    </div>
+    <p class="note">Plná čára a sytě vybarvené sloupce jsou hodnoty modelu Open-Meteo, přerušovaná čára a světlé sloupce předpověď${d.issued ? ` vydaná ${when(d.issued)}` : ""}.</p>
+    ${sitesTable(d)}`;
+  const x = [...d.hours.map(h => h[0]), ...d.forecast.map(f => f[0])];
+  const past = d.hours.length, fc = d.forecast.length;
+  const temp = css("--orange"), rain = css("--blue");
+  timeChart($("#chTemp"), {x, unit: "hour", label: "Teplota", format: v => `${num(v, 1)} °C`, legend: fc > 0,
+    series: [{name: "Naměřeno", color: temp, values: pad(d.hours.map(h => h[1]), 0, fc)},
+             {name: "Předpověď", color: temp, dash: true, values: joined(d.forecast.map(f => f[1]), d.hours.map(h => h[1]))}]});
+  timeChart($("#chRain"), {x, unit: "hour", label: "Srážky", format: v => `${num(v, 1)} mm`, legend: fc > 0,
+    series: [{name: "Naměřeno", color: rain, type: "bar", values: pad(d.hours.map(h => h[2]), 0, fc)},
+             {name: "Předpověď", color: rain, type: "bar", dash: true, values: pad(d.forecast.map(f => f[2]), past, 0)}]});
+}
+
 const SECTIONS = {
   async delays(body) {
     const d = await get(`/api/stats/delays?days=${days}`);
@@ -437,39 +564,10 @@ const SECTIONS = {
   },
 
   async weather(body) {
-    const d = await get(`/api/stats/weather?days=${days}`);
-    const now = d.now;
-    const temps = d.sites.map(s => s.temperature).filter(t => t != null);
-    const precip = d.hours.reduce((a, h) => a + (h[2] || 0), 0);
-    body.innerHTML = `
-      <div class="tiles">
-        <div class="tile"><b>${now ? num(now.temperature, 1) + " °C" : "–"}</b><span>${now ? esc(now.text || "teď") + `, ${bucketLabel(now.time, "hour").split(" ").pop()}` : "teď"}</span></div>
-        <div class="tile"><b>${now ? num(now.wind, 0) + " km/h" : "–"}</b><span>vítr${now?.humidity != null ? `, vlhkost ${num(now.humidity)} %` : ""}</span></div>
-        <div class="tile"><b>${num(precip, 1)} mm</b><span>srážky za zvolené období</span></div>
-        <div class="tile"><b>${temps.length ? `${num(Math.min(...temps), 1)} až ${num(Math.max(...temps), 1)} °C` : "–"}</b><span>na stanovištích ve městě</span></div>
-      </div>
-      <div class="grid2">
-        <div><h3>Teplota</h3><div id="chTemp"></div></div>
-        <div><h3>Srážky</h3><div id="chRain"></div></div>
-      </div>
-      <p class="note">Plná čára a sytě vybarvené sloupce jsou naměřené hodnoty, přerušovaná čára a světlé sloupce předpověď${d.issued ? ` vydaná ${when(d.issued)}` : ""}.</p>
-      <h3>Teplota vzduchu ve městě</h3>
-      ${d.sites.length ? `<div class="tbl"><table><tr><th>Stanoviště</th><th>Městská část</th><th class="n">Teplota</th><th class="n">Změřeno</th></tr>
-        ${d.sites.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(s.district || "")}</td><td class="n">${num(s.temperature, 1)} °C</td><td class="n">${ago(s.time)}</td></tr>`).join("")}
-      </table></div>` : `<p class="empty">Žádná měření za poslední den.</p>`}`;
-    const x = [...d.hours.map(h => h[0]), ...d.forecast.map(f => f[0])];
-    const past = d.hours.length, pad = (a, before, after) => [...Array(before).fill(null), ...a, ...Array(after).fill(null)];
-    const fc = d.forecast.length;
-    // The forecast line starts at the last measured hour, so the two lines join.
-    const fcTemp = pad(d.forecast.map(f => f[1]), past, 0);
-    if (past && fc) fcTemp[past - 1] = d.hours[past - 1][1];
-    const temp = css("--orange"), rain = css("--blue");
-    timeChart($("#chTemp"), {x, unit: "hour", label: "Teplota", format: v => `${num(v, 1)} °C`, legend: fc > 0,
-      series: [{name: "Naměřeno", color: temp, values: pad(d.hours.map(h => h[1]), 0, fc)},
-               {name: "Předpověď", color: temp, dash: true, values: fcTemp}]});
-    timeChart($("#chRain"), {x, unit: "hour", label: "Srážky", format: v => `${num(v, 1)} mm`, legend: fc > 0,
-      series: [{name: "Naměřeno", color: rain, type: "bar", values: pad(d.hours.map(h => h[2]), 0, fc)},
-               {name: "Předpověď", color: rain, type: "bar", dash: true, values: pad(d.forecast.map(f => f[2]), past, 0)}]});
+    const [d, c] = await Promise.all([get(`/api/stats/weather?days=${days}`),
+                                      get(`/api/stats/chmi?days=${days}`).catch(() => null)]);
+    if (c && c.hours.length) weatherStations(body, d, c);
+    else weatherModel(body, d);
   },
 
   async parking(body) {
