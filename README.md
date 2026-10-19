@@ -7,7 +7,7 @@ A web app that shows the network of the South Moravian Region's integrated publi
 - **A chart** shows how many vehicles are in service throughout the day, by mode of transport.
 - **A reachability map** shows where you can get from a chosen stop within 15–120 minutes.
 - **A live map** (`/zive`) shows where every vehicle is right now and how late it is, with the remaining stops and their expected times, service alerts for the line, live car traffic and road closures in Brno.
-- **A statistics page** (`/statistiky`) shows what the history collector has stored: delays of IDS JMK vehicles by mode and the most delayed lines, current diversions, weather with the forecast, free spaces in car parks, cyclists and pedestrians, swimming pools and ice rinks, water outages, today's events, and the state of every collector job.
+- **A statistics page** (`/statistiky`) shows what the history collector has stored: delays of IDS JMK vehicles by mode and the most delayed lines, current diversions, car traffic jams in Brno (jammed kilometres over time and by hour of day, a map of where jams form, the segments jammed longest, the longest jams, accidents and closures), weather with the forecast, free spaces in car parks, cyclists and pedestrians, swimming pools and ice rinks, water outages, today's events, and the state of every collector job.
 
 The user interface is in Czech. Below, Czech labels are quoted as they appear on screen, with a translation where it helps.
 
@@ -363,6 +363,7 @@ python app.py --update --build-only
 | `GET /api/live/events` | road closures and restrictions in Brno |
 | `GET /statistiky` | statistics from the history database (Czech); `?dny=1\|7\|30` picks the period |
 | `GET /api/stats/delays?days=1\|7\|30` | average delay per hour (per day for 30) and mode, the 15 most delayed lines, stored days |
+| `GET /api/stats/traffic?days=…` | car traffic jams: average jammed km per hour (per day for 30) at level 4 and 5, by hour of day on workdays and weekends, every segment jammed in the period with its geometry and share of time jammed, the 10 longest jams, road events now and accidents in the period |
 | `GET /api/stats/weather?days=…` | hourly weather, the latest forecast, Teplárny Brno sites |
 | `GET /api/stats/chmi?days=…` | ČHMÚ stations in Brno: latest values, hourly series (`<station>:<element>`), daily rainfall per station |
 | `GET /api/stats/parking?days=…&lot=<name>` | car parks now and free spaces over time (all car parks without `lot`) |
@@ -409,6 +410,8 @@ Most live sources on data.brno.cz publish only the current state: free spaces in
 **Vehicle delays.** The KORDIS archive has a sample of every vehicle every 30 seconds, about 1.8 million a weekday. The collector keeps a sample only when a vehicle's line, course, last stop or delay changes. That is about 27 % of the samples, and nothing about delays and stop passages is lost, because between those samples the vehicle only moves along its route. A weekday takes about 45 MB in PostgreSQL, around 14 GB a year. `vehicle_sample` is partitioned by month, so old months can be detached or dropped. The archive is uploaded irregularly and often cut short, so the live stream is recorded as well. When a day arrives in the archive, it replaces what the stream recorded for that day (`vehicle_day.source`: 1 = stream, may have gaps; 2 = archive, complete). With `KORDIS_RAW_DIR` set, the archive's daily Parquet files with every sample (~13 MB a day) are kept too.
 
 **Traffic jams.** dopravniinfo.cz measures every segment from the vehicles driving through it and updates it about every minute, with a traffic level from 1 (free flow) to 5 (below 20 % of the usual speed; 4 and 5 are jams). The collector keeps a row in `traffic_sample` only when a segment's level or its delay in whole minutes changes, so every jam is complete: when it began and ended and how long the delay grew. At the afternoon peak that is about 250 rows per 2 minutes, a quarter of the updates. A segment that drops out of the feed (no vehicle for a few minutes) gets a row with level `NULL`. When the collector starts, it writes the current state of every segment, because it does not know the stored one. `road_event` keeps every closure, roadwork and accident ever published, with the first and last time it was seen.
+
+The statistics page weights everything by time: a row holds until the segment's next one. A jam stored before a pause of the collector (more than 10 minutes between successful `traffic` runs, from `collector_run`) ends where the pause begins, and time without data is left out of the averages. Jams on one segment less than 5 minutes apart count as one. The source names segments only by codes (`TS…`), so the page names them by road number and km, and by the nearest IDS JMK stop of the current timetable.
 
 **Backfills.** On the first start the collector also fetches the history the sources have: the bike counters since 2020 (1.2 million rows), the TSB sensors since 2023 and the weather since 2020. It works in batches with short pauses and finishes in about 15 minutes.
 

@@ -557,6 +557,13 @@ def api_stats_diversions():
     return _query(stats.History.diversions)
 
 
+@app.route("/api/stats/traffic")
+def api_stats_traffic():
+    """Traffic jams on Brno's roads, the segments jammed longest, and road events."""
+    stops = [(s["name"], s["lat"], s["lon"]) for s in state.network["stops"]]
+    return _query(stats.History.traffic, _days(), stops)
+
+
 @app.route("/api/stats/weather")
 def api_stats_weather():
     """Hourly weather, the latest forecast and air temperature at the Teplárny Brno sites."""

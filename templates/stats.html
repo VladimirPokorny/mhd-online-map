@@ -91,6 +91,12 @@
   .item .meta { color:var(--muted); font-size:13px; }
   .more { margin-top:8px; }
 
+  /* traffic map */
+  .tmap { height:440px; border:1px solid var(--line); border-radius:10px; margin:6px 0 0; z-index:0; }
+  .tmap-legend i { height:5px; }
+  tr[data-seg] { cursor:pointer; }
+  tr[data-seg]:hover td { background:var(--soft); }
+
   footer { border-top:1px solid var(--line); padding:24px 0 40px; font-size:14px; color:var(--muted); margin-top:24px; }
 
   @media (max-width: 760px) {
@@ -103,6 +109,7 @@
     .brand { font-size:14px; }
     .seg button { padding:5px 8px; font-size:13px; }
     .chart svg { height:190px; }
+    .tmap { height:340px; }
   }
 </style>
 {% include "_pwa.html" %}
@@ -128,7 +135,7 @@
     <p>Zpoždění veřejné dopravy, počasí, volná místa na parkovištích, počty cyklistů a chodců a další data, která aplikace průběžně ukládá z otevřených zdrojů města Brna a IDS JMK.</p>
     {% if enabled %}
     <div class="toc">
-      <a href="#zpozdeni">Zpoždění MHD</a><a href="#vyluky">Výluky</a><a href="#pocasi">Počasí</a><a href="#parkovani">Parkování</a>
+      <a href="#zpozdeni">Zpoždění MHD</a><a href="#vyluky">Výluky</a><a href="#kolony">Kolony aut</a><a href="#pocasi">Počasí</a><a href="#parkovani">Parkování</a>
       <a href="#cyklo">Cyklisté a chodci</a><a href="#mesto">Koupaliště a město</a><a href="#sber">Sběr dat</a>
     </div>
     {% endif %}
@@ -150,6 +157,12 @@
     <h2>Výluky a omezení</h2>
     <p class="sub">Odklony, uzavírky a přesunuté zastávky IDS JMK, které platí teď nebo začnou později.</p>
     <div data-body="diversions"><p class="loading">Načítám…</p></div>
+  </section>
+
+  <section id="kolony">
+    <h2>Kolony aut</h2>
+    <p class="sub">Rychlost aut na silnicích v Brně podle Národního dopravního informačního centra, uzavírky a nehody.</p>
+    <div data-body="traffic"><p class="loading">Načítám…</p></div>
   </section>
 
   <section id="pocasi">
@@ -186,7 +199,7 @@
 
 <footer>
   <div class="wrap">
-    Zdroje: KORDIS JMK, data.brno.cz, Český hydrometeorologický ústav (ČHMÚ), Open-Meteo, Teplárny Brno, STAREZ, Brněnské vodárny a kanalizace, GoToBrno ·
+    Zdroje: KORDIS JMK, data.brno.cz, Národní dopravní informační centrum (ŘSD, dopravniinfo.cz), Český hydrometeorologický ústav (ČHMÚ), Open-Meteo, Teplárny Brno, STAREZ, Brněnské vodárny a kanalizace, GoToBrno ·
     Data jízdního řádu: {{ agency }} · Nezávislá aplikace, není oficiálním produktem IDS JMK ani KORDIS JMK.
   </div>
 </footer>
@@ -261,11 +274,13 @@ function timeTicks(t0, t1, width) {
 
 /* A time chart with one value axis: lines (``type: "line"``, optionally dashed) and bars.
    opts: {x: [bucket strings], unit: "hour" | "day", series: [{name, color, values, type, dash}],
-          format: v => text, zero: include 0 on the axis, small: lower chart}. */
+          format: v => text, zero: include 0 on the axis, small: lower chart,
+          xFormat: bucket => text for the tooltip and the table (default: the bucket's date and time)}. */
 function timeChart(el, opts) {
   const series = opts.series.filter(s => s.values.some(v => v != null));
   if (!opts.x.length || !series.length) { el.innerHTML = `<p class="empty">Za toto období zatím nejsou data.</p>`; return; }
   const fmt = opts.format || (v => num(v, 1));
+  const xf = opts.xFormat || (x => bucketLabel(x, opts.unit));
   const legend = series.length > 1 || opts.legend
     ? `<div class="legend">${series.map(s => `<span><i class="${s.dash ? "dash" : ""}" style="background:${s.color};--c:${s.color}"></i>${esc(s.name)}</span>`).join("")}</div>` : "";
   el.innerHTML = `${legend}<div class="chart${opts.small ? " small" : ""}"><svg role="img" aria-label="${esc(opts.label || "")}"></svg><div class="tip"></div></div>
@@ -278,7 +293,7 @@ function timeChart(el, opts) {
   // The table view, built once.
   el.querySelector(".scroll").innerHTML = `<table><tr><th>Čas</th>${series.map(s => `<th class="n">${esc(s.name)}</th>`).join("")}</tr>${
     opts.x.map((x, i) => series.some(s => s.values[i] != null)
-      ? `<tr><td>${bucketLabel(x, opts.unit)}</td>${series.map(s => `<td class="n">${s.values[i] == null ? "" : fmt(s.values[i])}</td>`).join("")}</tr>` : "").reverse().join("")}</table>`;
+      ? `<tr><td>${xf(x)}</td>${series.map(s => `<td class="n">${s.values[i] == null ? "" : fmt(s.values[i])}</td>`).join("")}</tr>` : "").reverse().join("")}</table>`;
 
   function draw() {
     const W = svg.clientWidth, H = svg.clientHeight;
@@ -338,7 +353,7 @@ function timeChart(el, opts) {
       line.setAttribute("x1", x); line.setAttribute("x2", x); line.style.display = "";
       dots.innerHTML = present.filter(s => s.type !== "bar").map(s =>
         `<circle cx="${x}" cy="${Y(s.values[best])}" r="4" fill="${s.color}" stroke="${css("--bg")}" stroke-width="2"/>`).join("");
-      tip.innerHTML = `<b>${bucketLabel(opts.x[best], opts.unit)}</b>` + present.map(s =>
+      tip.innerHTML = `<b>${xf(opts.x[best])}</b>` + present.map(s =>
         `<div><i style="background:${s.color}"></i>${esc(s.name)}<em>${fmt(s.values[best])}</em></div>`).join("");
       tip.style.display = "block";
       const left = x + 14 + tip.offsetWidth > W ? x - 14 - tip.offsetWidth : x + 14;
@@ -515,6 +530,55 @@ function weatherModel(body, d) {
              {name: "Předpověď", color: rain, type: "bar", dash: true, values: pad(d.forecast.map(f => f[2]), past, 0)}]});
 }
 
+// ----------------------------------------------------------- car traffic ---
+
+// Shades of the live map's traffic colours, for the share of time a segment was jammed.
+const JAM_COLORS = ["#b3a9ee", "#8d7fe4", "#4a3aa7", "#2f2470"];
+const JAM_SHARES = [0.02, 0.05, 0.1];   // class limits: under 2 %, 2–5 %, 5–10 %, 10 % and more
+const jamClass = share => JAM_SHARES.filter(s => share >= s).length;
+// A road segment in words: the source names segments only by codes, so by road number and km, and the nearest stop.
+function segName(s) {
+  if (!s) return "–";
+  const road = s.road ? `${/^\d/.test(s.road) ? "silnice " : ""}${s.road}${s.km != null ? `, km ${num(s.km, 1)}` : ""}` : "";
+  const stop = s.stop ? `u zastávky ${s.stop}` : "";
+  return [road, stop].filter(Boolean).join(" · ") || (s.road === null ? "místní komunikace" : `úsek ${s.id}`);
+}
+// Seconds as minutes ("3,5 min"), minutes as hours and minutes ("1 h 32 min").
+const minutes = s => s == null ? "–" : `${num(s / 60, 1)} min`;
+const duration = m => m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`;
+
+// Leaflet, loaded the first time the traffic map is drawn (the same version as the maps).
+let leaflet, trafficMap;
+const loadLeaflet = () => leaflet ||= new Promise((resolve, reject) => {
+  const link = Object.assign(document.createElement("link"), {rel: "stylesheet", href: "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"});
+  const script = Object.assign(document.createElement("script"), {src: "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js", onload: resolve, onerror: reject});
+  document.head.append(link, script);
+});
+
+// The segments jammed in the period on a map, coloured by the share of time they were jammed.
+async function trafficMapDraw(el, segments) {
+  try { await loadLeaflet(); } catch (e) { el.outerHTML = `<p class="empty">Mapu se nepodařilo načíst.</p>`; return; }
+  if (!el.isConnected) return;   // the section was redrawn meanwhile
+  trafficMap?.remove();
+  const map = trafficMap = L.map(el, {scrollWheelZoom: false, preferCanvas: true});
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, NDIC'}).addTo(map);
+  const layers = new Map(), bounds = [];
+  // The worst last, so they are drawn on top.
+  for (const s of [...segments].sort((a, b) => a.share - b.share)) {
+    if (!s.geometry.length) continue;
+    const k = jamClass(s.share);
+    const line = L.polyline(s.geometry, {color: JAM_COLORS[k], weight: 3 + k, opacity: 0.9})
+      .bindTooltip(`<b>${esc(segName(s))}</b><br>v koloně ${pct(s.share)} času (${num(s.hours, 1)} h)` +
+                   `<br>průměrné zdržení ${minutes(s.avg_delay)}, nejvíc ${minutes(s.max_delay)}${s.now ? "<br><b>teď kolona</b>" : ""}`, {sticky: true})
+      .addTo(map);
+    layers.set(s.id, line);
+    bounds.push(...s.geometry.flat());
+  }
+  bounds.length ? map.fitBounds(bounds, {padding: [10, 10]}) : map.setView([49.195, 16.608], 12);
+  return layers;
+}
+
 const SECTIONS = {
   async delays(body) {
     const d = await get(`/api/stats/delays?days=${days}`);
@@ -561,6 +625,77 @@ const SECTIONS = {
     body.innerHTML = `<p class="sub">${d.length} zveřejněných výluk a omezení.</p>
       <div class="list">${d.slice(0, 8).map(item).join("")}</div>
       ${d.length > 8 ? `<details class="more"><summary>Zobrazit dalších ${d.length - 8}</summary><div class="list" style="margin-top:10px">${d.slice(8).map(item).join("")}</div></details>` : ""}`;
+  },
+
+  async traffic(body) {
+    const d = await get(`/api/stats/traffic?days=${days}`);
+    if (!d.series.some(r => r[1] != null)) { body.innerHTML = `<p class="empty">Za toto období zatím nejsou data o provozu aut.</p>`; return; }
+    const seg = new Map(d.segments.map(s => [s.id, s]));
+    const ev = d.events, top = d.segments.slice(0, 15), longest = d.longest[0];
+    const incident = i => `<div class="item"><h4>${esc(i.title || "Událost")}${i.current ? " · trvá" : ""}</h4>
+      <div class="meta">${esc(i.place || "")}${i.place ? " · " : ""}${period(i.from, i.current ? null : i.to)}</div>
+      ${i.text ? `<p>${esc(i.text.length > 240 ? i.text.slice(0, 240) + "…" : i.text)}</p>` : ""}</div>`;
+    body.innerHTML = `
+      <div class="tiles">
+        <div class="tile"><b>${d.now ? `${num(d.now.km, 1)} km` : "–"}</b><span>${d.now ? `v kolonách teď (${d.now.segments} úseků)` : "teď neznámo, sběr dat neběží"}</span></div>
+        <div class="tile"><b>${num(d.avg_km, 1)} km</b><span>v kolonách průměrně</span></div>
+        <div class="tile"><b>${d.peak ? `${num(d.peak[1], 1)} km` : "–"}</b><span>nejvíc${d.peak ? `: ${bucketLabel(d.peak[0], "hour")}` : ""}</span></div>
+        <div class="tile"><b>${d.segments.length}</b><span>úseků aspoň chvíli v koloně</span></div>
+        <div class="tile"><b>${longest ? duration(longest.minutes) : "–"}</b><span>nejdelší kolona${longest ? `: ${esc(segName(seg.get(longest.id)))}` : ""}</span></div>
+        <div class="tile"><b>${ev.accidents}</b><span>nehod za období${ev.incident_count > ev.accidents ? `, další události ${ev.incident_count - ev.accidents}` : ""}</span></div>
+        <div class="tile"><b>${ev.now.closure}</b><span>uzavírek a omezení teď</span></div>
+        <div class="tile"><b>${ev.now.works}</b><span>prací na silnici teď</span></div>
+      </div>
+      <h3>Kilometry silnic v koloně</h3><div id="chJam"></div>
+      ${d.profile ? `<h3>Typický den: kolony podle hodiny</h3><div id="chJamDay"></div>` : ""}
+      <h3>Kde se tvoří kolony</h3>
+      <div class="legend tmap-legend">${["pod 2 %", "2–5 %", "5–10 %", "10 % a víc"].map((t, k) =>
+        `<span><i style="background:${JAM_COLORS[k]}"></i>${t} času v koloně</span>`).join("")}</div>
+      <div class="tmap" id="trafficMap" role="img" aria-label="Mapa úseků, kde byly kolony"></div>
+      <h3>Úseky nejčastěji v koloně</h3>
+      <div class="tbl"><table>
+        <tr><th>Úsek</th><th class="n">Délka</th><th class="n">V koloně</th><th class="n">Z toho stojí</th><th class="n">Průměrné zdržení</th><th class="n">Nejvíc</th><th class="n">Kolon</th></tr>
+        ${top.map(s => `<tr data-seg="${s.id}"><td>${esc(segName(s))}${s.now ? ` <span class="badge" style="background:${JAM_COLORS[3]};color:#fff">teď</span>` : ""}</td>
+          <td class="n">${num(s.length)} m</td><td class="n">${meter(s.share / top[0].share, JAM_COLORS[2])}${num(s.hours, 1)} h (${pct(s.share)})</td>
+          <td class="n">${num(s.stopped, 1)} h</td><td class="n">${minutes(s.avg_delay)}</td><td class="n">${minutes(s.max_delay)}</td><td class="n">${s.jams}</td></tr>`).join("")}
+      </table></div>
+      <h3>Nejdelší kolony</h3>
+      <div class="tbl"><table>
+        <tr><th>Úsek</th><th>Kdy</th><th class="n">Trvání</th><th class="n">Největší zdržení</th></tr>
+        ${d.longest.map(j => `<tr data-seg="${j.id}"><td>${esc(segName(seg.get(j.id)))}</td><td>${j.ongoing ? `od ${when(j.from)}, trvá` : period(j.from, j.to)}</td>
+          <td class="n">${duration(j.minutes)}</td><td class="n">${minutes(j.max_delay)}${j.level >= 5 ? " · stojí" : ""}</td></tr>`).join("")}
+      </table></div>
+      <h3>Nehody a mimořádné události</h3>
+      ${ev.incidents.length ? `<div class="list">${ev.incidents.slice(0, 6).map(incident).join("")}</div>
+        ${ev.incidents.length > 6 ? `<details class="more"><summary>Zobrazit dalších ${ev.incident_count - 6}</summary><div class="list" style="margin-top:10px">${ev.incidents.slice(6).map(incident).join("")}</div></details>` : ""}`
+        : `<p class="empty">Za toto období žádné.</p>`}
+      <p class="note">Rychlost měří vozidla, která úsekem projíždějí, zhruba každou minutu. Kolona je úsek, kde auta jedou pod polovinou obvyklé rychlosti;
+        „stojí“ znamená pod pětinou. Kilometry jsou průměr za hodinu${d.unit === "day" ? " (za den)" : ""} přes všechny úseky, které zdroj sleduje (silnice v Brně a dálnice D1 a D2 kolem něj).
+        Zdržení je, o kolik déle úsek trvá projet než bez provozu. Kolony, mezi kterými se provoz uvolnil na méně než 5 minut, se počítají jako jedna.
+        ${d.coverage != null && d.coverage < 0.99 ? `Sběr dat běžel ${pct(d.coverage)} období; doba bez dat se nepočítá.` : ""}
+        Úseky zdroj označuje jen kódy, proto je popisujeme číslem silnice a nejbližší zastávkou IDS JMK.</p>`;
+
+    timeChart($("#chJam"), {x: d.series.map(r => r[0]), unit: d.unit, zero: true, label: "Kilometry silnic v koloně",
+      format: v => `${num(v, 1)} km`, series: [
+        {name: "V koloně", color: JAM_COLORS[1], values: d.series.map(r => r[1] == null ? null : r[1] + r[2])},
+        {name: "Z toho stojí", color: JAM_COLORS[3], dash: true, values: d.series.map(r => r[2])}]});
+    if (d.profile) {
+      const hours = Array.from({length: 24}, (_, h) => `2000-01-03T${String(h).padStart(2, "0")}:00`);
+      timeChart($("#chJamDay"), {x: hours, unit: "hour", zero: true, small: true, label: "Kolony podle hodiny dne",
+        format: v => `${num(v, 1)} km`, xFormat: x => `${+x.slice(11, 13)}:00–${+x.slice(11, 13) + 1}:00`, series: [
+          {name: "Pracovní dny", color: css("--blue"), values: d.profile.work},
+          {name: "Víkendy", color: css("--orange"), values: d.profile.weekend}]});
+    }
+    const mapEl = $("#trafficMap");
+    const layers = await trafficMapDraw(mapEl, d.segments);
+    // A row of the tables shows its segment on the map.
+    if (layers) body.querySelectorAll("tr[data-seg]").forEach(tr => tr.onclick = () => {
+      const line = layers.get(+tr.dataset.seg);
+      if (!line) return;
+      mapEl.scrollIntoView({behavior: "smooth", block: "center"});
+      trafficMap.fitBounds(line.getBounds(), {maxZoom: 16, padding: [40, 40]});
+      line.openTooltip(line.getCenter());
+    });
   },
 
   async weather(body) {
@@ -666,7 +801,7 @@ const SECTIONS = {
 
 // Load the sections that depend on the period (or all of them on the first load).
 function loadAll(onlyPeriod) {
-  for (const name of ["delays", "weather", "parking", "counts"]) {
+  for (const name of ["delays", "traffic", "weather", "parking", "counts"]) {
     document.querySelector(`[data-body="${name}"]`).innerHTML = `<p class="loading">Načítám…</p>`;
     load(name, SECTIONS[name]);
   }

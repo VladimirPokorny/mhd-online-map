@@ -7,10 +7,13 @@ over vehicle_sample scan up to a month of rows.
 
 Times are bucketed in Prague local time and returned as "YYYY-MM-DDTHH:MM" strings.
 """
+import bisect
+import math
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 CACHE_S = 300          # how long an answer is reused
 STATEMENT_TIMEOUT_MS = 30_000
@@ -22,6 +25,13 @@ LATE_MIN = 3           # a vehicle this many minutes late counts as delayed
 # first bucket is complete (query parameters "days" and "unit").
 SINCE = ("(date_trunc(%(unit)s, now() AT TIME ZONE 'Europe/Prague' - make_interval(days => %(days)s))"
          " AT TIME ZONE 'Europe/Prague')")
+PRAGUE = ZoneInfo("Europe/Prague")
+
+JAM_LEVEL = 4          # traffic level from which a segment counts as jammed (speed below 50 % of free flow)
+# The traffic job runs every 2 minutes; a longer pause between its successful runs means no data,
+# and a jam stored before the pause ends where the pause begins instead of lasting through it.
+TRAFFIC_GAP = timedelta(minutes=10)
+STOP_RADIUS_M = 700    # a segment is named after the nearest stop within this distance
 
 # WMO weather codes (Open-Meteo) in Czech.
 WEATHER_CODES = {
@@ -52,6 +62,35 @@ def _iso(t: datetime | None) -> str | None:
 def _num(v, digits: int = 1):
     """A database number rounded for JSON; None stays None."""
     return None if v is None else round(float(v), digits)
+
+
+def _period_start(days: int, unit: str) -> datetime:
+    """Start of the period as SINCE computes it: ``days`` back, rounded down to a whole bucket in Prague time."""
+    t = datetime.now(PRAGUE).replace(tzinfo=None) - timedelta(days=days)
+    t = t.replace(minute=0, second=0, microsecond=0)
+    if unit == "day":
+        t = t.replace(hour=0)
+    return t.replace(tzinfo=PRAGUE).astimezone(timezone.utc)
+
+
+def _midpoint(geometry) -> tuple[float, float] | None:
+    """(lat, lon) of the middle point of a segment's geometry ([[[lat, lon], …], …])."""
+    points = [p for part in geometry or [] for p in part]
+    return tuple(points[len(points) // 2]) if points else None
+
+
+def _nearest_stop(point, stops) -> str | None:
+    """Name of the stop nearest to ``point`` within STOP_RADIUS_M; ``stops`` is [(name, lat, lon)]."""
+    if not point:
+        return None
+    lat, lon = point
+    kx = math.cos(math.radians(lat))
+    best, best_d = None, (STOP_RADIUS_M / 111_320) ** 2
+    for name, slat, slon in stops:
+        d = (slat - lat) ** 2 + ((slon - lon) * kx) ** 2
+        if d < best_d:
+            best, best_d = name, d
+    return best
 
 
 class History:
@@ -154,6 +193,44 @@ class History:
             return [{"id": i, "kind": kind, "title": title, "stop": stop, "lines": lines or [], "text": text,
                      "from": _iso(vf), "to": _iso(vt)} for i, kind, title, stop, lines, text, vf, vt in rows]
         return self._cached("diversions", compute)
+
+    # ---------------------------------------------------------- car traffic ---
+
+    def traffic(self, days: int, stops: list[tuple[str, float, float]]) -> dict:
+        """Traffic jams on Brno's roads: jammed kilometres over time and by hour of day, the segments
+        jammed longest, the longest jams, and road events (closures, roadworks, accidents).
+
+        traffic_sample has a row only when a segment's traffic changes, so a row holds until the
+        segment's next one; everything here is weighted by that time. ``stops`` is [(name, lat, lon)]
+        of the timetable, to name segments, which the source identifies only by codes."""
+        def compute():
+            unit = RANGES[days]
+            since, now = _period_start(days, unit), datetime.now(timezone.utc)
+            params = {"since": since, "jam": JAM_LEVEL, "gap": TRAFFIC_GAP}
+            # Pauses of the collector: from the end of a run to the start of the next one, or to now (open).
+            gaps = self._rows("""
+                SELECT finished_at, coalesce(next_start, now()), next_start IS NULL FROM (
+                    SELECT started_at, finished_at, lead(started_at) OVER (ORDER BY started_at) AS next_start
+                    FROM collector_run
+                    WHERE job = 'traffic' AND ok AND started_at >= %(since)s - interval '1 day') r
+                WHERE coalesce(next_start, now()) - started_at > %(gap)s ORDER BY 1""", params)
+            # Jam rows with the time of the segment's next row (from a day earlier: a jam may have begun before).
+            rows = self._rows("""
+                SELECT segment_id, observed_at, next_at, level, delay_s FROM (
+                    SELECT segment_id, observed_at, level, delay_s,
+                           lead(observed_at) OVER (PARTITION BY segment_id ORDER BY observed_at) AS next_at
+                    FROM traffic_sample WHERE observed_at >= %(since)s - interval '1 day') s
+                WHERE level >= %(jam)s AND (next_at IS NULL OR next_at > %(since)s)
+                ORDER BY segment_id, observed_at""", params)
+            seg_ids = sorted({r[0] for r in rows})
+            meta = {sid: rest for sid, *rest in self._rows("""
+                SELECT segment_id, road_class, road_number, chainage_from, length_m, geometry
+                FROM traffic_segment WHERE segment_id = ANY(%s)""", (seg_ids,))}
+            events = self._rows("""
+                SELECT event_id, title, icon, locality, description, first_seen, last_seen, valid_from, valid_to
+                FROM road_event WHERE last_seen >= %(since)s ORDER BY first_seen DESC""", params)
+            return _traffic_stats(days, unit, since, now, gaps, rows, meta, events, stops)
+        return self._cached(("traffic", days), compute)
 
     # ------------------------------------------------------------- weather ---
 
@@ -343,3 +420,132 @@ class History:
                 "event_count": len(events),
             }
         return self._cached("city", compute)
+
+
+# ------------------------------------------------------------ car traffic ---
+
+HOUR = timedelta(hours=1)
+JAM_MERGE = timedelta(minutes=5)   # a jam that eases for at most this long is still the same jam
+
+
+def _event_kind(title: str | None, icon: str | None) -> str:
+    """Kind of a road event from its published title and icon: accident, incident, works or closure."""
+    t, i = (title or "").lower(), (icon or "").removeprefix("p_")
+    if "nehod" in t:
+        return "accident"
+    if i.startswith("U4") or "práce" in t:
+        return "works"
+    if i.startswith("U3"):   # "Dopravní situace", "Zdržení a čekací doby"
+        return "incident"
+    return "closure"
+
+
+def _traffic_stats(days, unit, since, now, gaps, rows, meta, events, stops) -> dict:
+    """The answer of History.traffic from its rows (see there); times are UTC datetimes."""
+    gap_starts = [g[0] for g in gaps]
+    stale = bool(gaps) and gaps[-1][2]   # the collector has not run for a while: nothing is known about now
+
+    # Seconds with data in every hour of the period. Hours start on whole UTC hours, which are whole
+    # Prague hours too, so the period start (a whole Prague hour) is one of them.
+    hours, h = [], since
+    while h < now:
+        end = min(h + HOUR, now)
+        hours.append((h, max(0.0, (end - h).total_seconds()
+                             - sum(max(0.0, (min(end, ge) - max(h, gs)).total_seconds()) for gs, ge, _ in gaps))))
+        h = end
+
+    jam = {}        # hour start → [jammed km·s on level 4, on level 5]
+    per_seg = {}    # segment → [jammed s, level-5 s, delay·s, max delay s]
+    episodes = []   # [segment, start, end, max delay s, max level, ongoing]
+    delay_now = {}  # segment jammed now → its delay now, s
+    for sid, t0, t1, level, delay in rows:
+        t0 = t0.astimezone(timezone.utc)
+        end = (t1 or now).astimezone(timezone.utc)
+        i = bisect.bisect_left(gap_starts, t0)
+        if i < len(gap_starts) and gap_starts[i] < end:
+            end = gap_starts[i]   # the collector paused: the jam is known only until then
+        start, end = max(t0, since), min(end, now)
+        if end <= start:
+            continue
+        ongoing = t1 is None and end == now and not stale
+        if ongoing:
+            delay_now[sid] = delay or 0
+        km, d, dur = (meta.get(sid, (None,) * 5)[3] or 0) / 1000, delay or 0, (end - start).total_seconds()
+        h = start.replace(minute=0, second=0, microsecond=0)
+        while h < end:
+            jam.setdefault(h, [0.0, 0.0])[level >= 5] += km * (min(end, h + HOUR) - max(start, h)).total_seconds()
+            h += HOUR
+        seg = per_seg.setdefault(sid, [0.0, 0.0, 0.0, 0])
+        seg[0] += dur
+        seg[1] += dur if level >= 5 else 0
+        seg[2] += d * dur
+        seg[3] = max(seg[3], d)
+        last = episodes[-1] if episodes else None
+        if last and last[0] == sid and start - last[2] <= JAM_MERGE:
+            last[2], last[3], last[4], last[5] = end, max(last[3], d), max(last[4], level), ongoing
+        else:
+            episodes.append([sid, start, end, d, level, ongoing])
+
+    # Average jammed kilometres per bucket, over the time with data.
+    buckets, profile = {}, {wk: [[0.0, 0.0] for _ in range(24)] for wk in (False, True)}
+    for h, covered in hours:
+        local = h.astimezone(PRAGUE).replace(tzinfo=None)
+        j = jam.get(h, (0.0, 0.0))
+        b = buckets.setdefault(local.replace(hour=0) if unit == "day" else local, [0.0, 0.0, 0.0])
+        b[0], b[1], b[2] = b[0] + j[0], b[1] + j[1], b[2] + covered
+        p = profile[local.weekday() >= 5][local.hour]
+        p[0], p[1] = p[0] + j[0] + j[1], p[1] + covered
+    peak = max(((h, sum(jam.get(h, (0, 0))) / c) for h, c in hours if c >= 1800), key=lambda x: x[1], default=None)
+    covered = sum(c for _, c in hours)
+    total = sum(a + b for a, b in jam.values())
+
+    def label(sid):
+        cls, road, chainage, length, geometry = meta.get(sid, (None,) * 5)
+        return {"road": road, "km": _num(chainage / 1000) if road and chainage is not None else None,
+                "stop": _nearest_stop(_midpoint(geometry), stops), "length": length}
+
+    jams, jammed_now = {}, {e[0] for e in episodes if e[5]}
+    for e in episodes:
+        jams[e[0]] = jams.get(e[0], 0) + 1
+    segments = []
+    for sid, (jam_s, stop_s, delay_ss, max_delay) in sorted(per_seg.items(), key=lambda x: -x[1][0]):
+        geometry = (meta.get(sid) or (None,) * 5)[4] or []
+        segments.append({"id": sid, **label(sid), "hours": _num(jam_s / 3600, 2), "stopped": _num(stop_s / 3600, 2),
+                         "share": round(jam_s / covered, 4) if covered else None,
+                         "avg_delay": round(delay_ss / jam_s), "max_delay": max_delay,
+                         "jams": jams[sid], "now": sid in jammed_now,
+                         "geometry": [[[round(lat, 5), round(lon, 5)] for lat, lon in part] for part in geometry]})
+    current = [s for s in segments if s["now"]]
+    longest = sorted(episodes, key=lambda e: e[1] - e[2])[:10]
+
+    latest = max((e[6] for e in events), default=None)
+    ev_now = {"closure": 0, "works": 0, "incident": 0, "accident": 0}
+    incidents = []
+    for eid, title, icon, locality, description, first, last, vf, vt in events:
+        kind = _event_kind(title, icon)
+        if last >= latest - TRAFFIC_GAP and (vf is None or vf <= now) and (vt is None or vt > now):
+            ev_now[kind] += 1
+        if kind in ("accident", "incident") and first >= since:
+            incidents.append({"kind": kind, "title": title, "place": locality, "text": description,
+                              "from": _iso(first), "to": _iso(last), "current": last >= latest - TRAFFIC_GAP})
+
+    return {
+        "unit": unit,
+        # [bucket, average jammed km on level 4, on level 5]
+        "series": [[_local(b), _num(k4 / c, 2), _num(k5 / c, 2)] if c >= 60 else [_local(b), None, None]
+                   for b, (k4, k5, c) in sorted(buckets.items())],
+        # average jammed km by hour of day (Prague), on workdays (Mon–Fri) and at weekends; None for one day
+        "profile": {"work": [_num(a / c, 2) if c else None for a, c in profile[False]],
+                    "weekend": [_num(a / c, 2) if c else None for a, c in profile[True]]} if days > 1 else None,
+        "avg_km": _num(total / covered, 2) if covered else None,
+        "km_hours": _num(total / 3600, 1),
+        "peak": [_local(peak[0].astimezone(PRAGUE).replace(tzinfo=None)), _num(peak[1], 1)] if peak else None,
+        "coverage": round(covered / sum((min(h + HOUR, now) - h).total_seconds() for h, _ in hours), 3) if hours else None,
+        "now": None if stale else {"segments": len(current), "km": _num(sum(s["length"] or 0 for s in current) / 1000, 1),
+                                   "max_delay": max(delay_now.values(), default=None)},
+        "segments": segments,   # every segment jammed in the period, longest jammed first
+        "longest": [{"id": sid, "from": _iso(s), "to": _iso(e), "minutes": round((e - s).total_seconds() / 60),
+                     "max_delay": d, "level": lv, "ongoing": on} for sid, s, e, d, lv, on in longest],
+        "events": {"now": ev_now, "incidents": incidents[:30], "incident_count": len(incidents),
+                   "accidents": sum(1 for i in incidents if i["kind"] == "accident")},
+    }
