@@ -5,6 +5,7 @@ The IDS JMK feed has no shapes.txt, so track geometry comes from OpenStreetMap
 """
 import hashlib
 import json
+import math
 from collections import defaultdict
 from pathlib import Path
 
@@ -22,11 +23,43 @@ ROUTE_TYPES = {
 }
 
 CACHE_VERSION = 3
+# A stop this far from the middle of the network has broken coordinates (the feed has had a latitude
+# of 8.80 instead of 48.80); the network spans about 150 km.
+STOP_OUTLIER_KM = 250
 
 
 def _read(gtfs_dir: Path, name: str, **kwargs) -> pd.DataFrame:
     """Read one GTFS file of the feed into a DataFrame."""
     return pd.read_csv(gtfs_dir / f"{name}.txt", encoding="utf-8-sig", **kwargs)
+
+
+def _fix_coordinates(stops: pd.DataFrame) -> pd.DataFrame:
+    """Stops with broken coordinates moved to their station's other platforms, or dropped if it has none.
+
+    One wrong stop would otherwise stretch the OpenStreetMap query around the network to another
+    continent (and miss its cache), and draw lines across the map."""
+    lat0, lon0 = stops.stop_lat.median(), stops.stop_lon.median()
+    km = ((stops.stop_lat - lat0) ** 2 + ((stops.stop_lon - lon0) * math.cos(math.radians(lat0))) ** 2) ** 0.5 * 111.32
+    bad = km > STOP_OUTLIER_KM
+    if not bad.any():
+        return stops
+    good = stops[~bad]
+    parent = stops.get("parent_station", pd.Series(index=stops.index, dtype=object))
+    stations = good.assign(parent=parent[~bad]).dropna(subset=["parent"]).groupby("parent")[["stop_lat", "stop_lon"]].median()
+    stops = stops.copy()
+    drop = []
+    for i in stops.index[bad]:
+        r = stops.loc[i]
+        # A platform's station, or the station itself (its platforms name it as parent).
+        key = parent.get(i) if isinstance(parent.get(i), str) and parent.get(i) in stations.index else r.stop_id
+        if key in stations.index:
+            stops.loc[i, ["stop_lat", "stop_lon"]] = stations.loc[key].values
+            print(f"  stop {r.stop_id} {r.stop_name}: coordinates {r.stop_lat}, {r.stop_lon} are off the map, "
+                  f"using its station's other platforms")
+        else:
+            drop.append(i)
+            print(f"  stop {r.stop_id} {r.stop_name}: coordinates {r.stop_lat}, {r.stop_lon} are off the map, left out")
+    return stops.drop(index=drop)
 
 
 def _build(gtfs_dir: Path, osm_cache: Path) -> dict:
@@ -36,6 +69,7 @@ def _build(gtfs_dir: Path, osm_cache: Path) -> dict:
     stops = _read(
         gtfs_dir, "stops", dtype={"stop_id": str, "stop_name": str, "zone_id": str}
     ).dropna(subset=["stop_lat", "stop_lon"])
+    stops = _fix_coordinates(stops)
     trips = _read(gtfs_dir, "trips", usecols=["route_id", "trip_id"], dtype=str)
     stop_times = _read(
         gtfs_dir,
