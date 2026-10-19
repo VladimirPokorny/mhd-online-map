@@ -12,19 +12,21 @@ import math
 import os
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 CACHE_S = 300          # how long an answer is reused
 STATEMENT_TIMEOUT_MS = 30_000
 RANGES = {1: "hour", 7: "hour", 30: "day"}   # days shown → bucket size
+MAX_RANGE_DAYS = 31    # the longest period of chosen dates
+HOURLY_DAYS = 10       # chosen periods up to this many days are bucketed by hour, longer ones by day
 # Delays outside this range (minutes) are errors in the source rather than real delays.
 DELAY_MIN, DELAY_MAX = -30, 120
 LATE_MIN = 3           # a vehicle this many minutes late counts as delayed
-# Start of the period: ``days`` back, rounded down to a whole bucket in Prague time, so the
-# first bucket is complete (query parameters "days" and "unit").
-SINCE = ("(date_trunc(%(unit)s, now() AT TIME ZONE 'Europe/Prague' - make_interval(days => %(days)s))"
-         " AT TIME ZONE 'Europe/Prague')")
+# End of the period in SQL (query parameter "until"; NULL = up to now).
+UNTIL = "coalesce(%(until)s::timestamptz, 'infinity')"
+END = "coalesce(%(until)s::timestamptz, now())"   # end of the period for the latest values: until, or now
 PRAGUE = ZoneInfo("Europe/Prague")
 
 JAM_LEVEL = 4          # traffic level from which a segment counts as jammed (speed below 50 % of free flow)
@@ -64,13 +66,45 @@ def _num(v, digits: int = 1):
     return None if v is None else round(float(v), digits)
 
 
-def _period_start(days: int, unit: str) -> datetime:
-    """Start of the period as SINCE computes it: ``days`` back, rounded down to a whole bucket in Prague time."""
-    t = datetime.now(PRAGUE).replace(tzinfo=None) - timedelta(days=days)
-    t = t.replace(minute=0, second=0, microsecond=0)
-    if unit == "day":
-        t = t.replace(hour=0)
-    return t.replace(tzinfo=PRAGUE).astimezone(timezone.utc)
+def _utc(local: datetime) -> datetime:
+    """A naive Prague time as a UTC datetime."""
+    return local.replace(tzinfo=PRAGUE).astimezone(timezone.utc)
+
+
+@dataclass(frozen=True)
+class Period:
+    """The period a statistic covers: from ``since`` to ``until`` (UTC; None = up to now), in buckets of ``unit``."""
+    since: datetime
+    until: datetime | None
+    unit: str
+
+    @classmethod
+    def last(cls, days: int) -> "Period":
+        """The last ``days`` days, from a whole bucket in Prague time, so the first bucket is complete."""
+        unit = RANGES[days]
+        t = (datetime.now(PRAGUE).replace(tzinfo=None) - timedelta(days=days)).replace(minute=0, second=0, microsecond=0)
+        return cls(_utc(t.replace(hour=0) if unit == "day" else t), None, unit)
+
+    @classmethod
+    def dates(cls, first: date, last: date) -> "Period":
+        """Whole days from ``first`` to ``last`` (Prague); a period reaching today runs up to now."""
+        until = _utc(datetime.combine(last + timedelta(days=1), datetime.min.time()))
+        return cls(_utc(datetime.combine(first, datetime.min.time())),
+                   None if until > datetime.now(timezone.utc) else until,
+                   "hour" if (last - first).days < HOURLY_DAYS else "day")
+
+    @property
+    def live(self) -> bool:
+        """Whether the period runs up to now, so the current state belongs to it."""
+        return self.until is None
+
+    def end(self) -> datetime:
+        """End of the period: ``until``, or now."""
+        return self.until or datetime.now(timezone.utc)
+
+    def params(self, **more) -> dict:
+        """Query parameters "since", "until" and "unit", and ``more``."""
+        return {"since": self.since, "until": self.until, "unit": self.unit, **more}
 
 
 def _midpoint(geometry) -> tuple[float, float] | None:
@@ -79,17 +113,32 @@ def _midpoint(geometry) -> tuple[float, float] | None:
     return tuple(points[len(points) // 2]) if points else None
 
 
-def _nearest_stop(point, stops) -> str | None:
-    """Name of the stop nearest to ``point`` within STOP_RADIUS_M; ``stops`` is [(name, lat, lon)]."""
+# Cells of about 1.1 × 1.1 km around Brno, larger than STOP_RADIUS_M, so the nearest stop is in the 3 × 3 around.
+CELL_LAT, CELL_LON = 0.01, 0.015
+
+
+def _stop_grid(stops) -> dict:
+    """Stops ([(name, lat, lon)]) by cell, for _nearest_stop."""
+    grid = {}
+    for name, lat, lon in stops:
+        grid.setdefault((int(lat // CELL_LAT), int(lon // CELL_LON)), []).append((name, lat, lon))
+    return grid
+
+
+def _nearest_stop(point, grid) -> str | None:
+    """Name of the stop nearest to ``point`` within STOP_RADIUS_M; ``grid`` from _stop_grid."""
     if not point:
         return None
     lat, lon = point
     kx = math.cos(math.radians(lat))
     best, best_d = None, (STOP_RADIUS_M / 111_320) ** 2
-    for name, slat, slon in stops:
-        d = (slat - lat) ** 2 + ((slon - lon) * kx) ** 2
-        if d < best_d:
-            best, best_d = name, d
+    cy, cx = int(lat // CELL_LAT), int(lon // CELL_LON)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            for name, slat, slon in grid.get((cy + dy, cx + dx), ()):
+                d = (slat - lat) ** 2 + ((slon - lon) * kx) ** 2
+                if d < best_d:
+                    best, best_d = name, d
     return best
 
 
@@ -140,16 +189,16 @@ class History:
 
     # ----------------------------------------------------------- transport ---
 
-    def delays(self, days: int, line_modes: dict[int, str]) -> dict:
+    def delays(self, period: Period, line_modes: dict[int, str]) -> dict:
         """Average delay and share of delayed samples per time bucket and mode, and the most delayed lines.
 
         ``line_modes`` maps KORDIS LineID → mode (Tram, Bus, …) from the current timetable."""
         def compute():
-            unit = RANGES[days]
+            unit = period.unit
             ids, modes = list(line_modes), list(line_modes.values())
-            where = (f"observed_at >= {SINCE} "
+            where = (f"observed_at >= %(since)s AND observed_at < {UNTIL} "
                      f"AND delay_min BETWEEN {DELAY_MIN} AND {DELAY_MAX}")
-            params = {"days": days, "unit": unit, "ids": ids, "modes": modes, "late": LATE_MIN}
+            params = period.params(ids=ids, modes=modes, late=LATE_MIN)
             series = self._rows(f"""
                 SELECT date_trunc(%(unit)s, s.observed_at AT TIME ZONE 'Europe/Prague') AS bucket,
                        coalesce(m.mode, 'Other'), sum(s.delay_min), count(*),
@@ -164,9 +213,10 @@ class History:
                 FROM vehicle_sample WHERE {where}
                 GROUP BY line_id HAVING count(*) >= 30
                 ORDER BY avg(delay_min) DESC LIMIT 15""", params)
-            days_stored = self._rows("""
+            days_stored = self._rows(f"""
                 SELECT day, source, rows FROM vehicle_day
-                WHERE day >= (now() AT TIME ZONE 'Europe/Prague')::date - %s ORDER BY day""", (days,))
+                WHERE day >= (%(since)s AT TIME ZONE 'Europe/Prague')::date
+                  AND day < ({UNTIL} AT TIME ZONE 'Europe/Prague')::date ORDER BY day""", params)
             buckets = {}
             for bucket, mode, total, n, late in series:
                 b = buckets.setdefault(_local(bucket), {})
@@ -180,7 +230,7 @@ class History:
                 "days": [{"day": d.isoformat(), "source": "archiv" if source == 2 else "živě", "rows": rows}
                          for d, source, rows in days_stored],
             }
-        return self._cached(("delays", days, tuple(sorted(line_modes.items()))), compute)
+        return self._cached(("delays", period, tuple(sorted(line_modes.items()))), compute)
 
     def diversions(self) -> list[dict]:
         """IDS JMK diversions, closures and moved stops that are published and valid now or later."""
@@ -196,7 +246,7 @@ class History:
 
     # ---------------------------------------------------------- car traffic ---
 
-    def traffic(self, days: int, stops: list[tuple[str, float, float]]) -> dict:
+    def traffic(self, period: Period, stops: list[tuple[str, float, float]]) -> dict:
         """Traffic jams on Brno's roads: jammed kilometres over time and by hour of day, the segments
         jammed longest, the longest jams, and road events (closures, roadworks, accidents).
 
@@ -204,56 +254,125 @@ class History:
         segment's next one; everything here is weighted by that time. ``stops`` is [(name, lat, lon)]
         of the timetable, to name segments, which the source identifies only by codes."""
         def compute():
-            unit = RANGES[days]
-            since, now = _period_start(days, unit), datetime.now(timezone.utc)
-            params = {"since": since, "jam": JAM_LEVEL, "gap": TRAFFIC_GAP}
+            params = period.params(jam=JAM_LEVEL, gap=TRAFFIC_GAP)
             # Pauses of the collector: from the end of a run to the start of the next one, or to now (open).
-            gaps = self._rows("""
+            gaps = self._rows(f"""
                 SELECT finished_at, coalesce(next_start, now()), next_start IS NULL FROM (
                     SELECT started_at, finished_at, lead(started_at) OVER (ORDER BY started_at) AS next_start
                     FROM collector_run
-                    WHERE job = 'traffic' AND ok AND started_at >= %(since)s - interval '1 day') r
+                    WHERE job = 'traffic' AND ok AND started_at >= %(since)s - interval '1 day'
+                      AND started_at < {UNTIL} + interval '1 day') r
                 WHERE coalesce(next_start, now()) - started_at > %(gap)s ORDER BY 1""", params)
-            # Jam rows with the time of the segment's next row (from a day earlier: a jam may have begun before).
-            rows = self._rows("""
+            # Jam rows with the time of the segment's next row (from a day earlier: a jam may have begun
+            # before; to a day later: it may end after).
+            rows = self._rows(f"""
                 SELECT segment_id, observed_at, next_at, level, delay_s FROM (
                     SELECT segment_id, observed_at, level, delay_s,
                            lead(observed_at) OVER (PARTITION BY segment_id ORDER BY observed_at) AS next_at
-                    FROM traffic_sample WHERE observed_at >= %(since)s - interval '1 day') s
-                WHERE level >= %(jam)s AND (next_at IS NULL OR next_at > %(since)s)
+                    FROM traffic_sample
+                    WHERE observed_at >= %(since)s - interval '1 day' AND observed_at < {UNTIL} + interval '1 day') s
+                WHERE level >= %(jam)s AND (next_at IS NULL OR next_at > %(since)s) AND observed_at < {UNTIL}
                 ORDER BY segment_id, observed_at""", params)
             seg_ids = sorted({r[0] for r in rows})
             meta = {sid: rest for sid, *rest in self._rows("""
                 SELECT segment_id, road_class, road_number, chainage_from, length_m, geometry
                 FROM traffic_segment WHERE segment_id = ANY(%s)""", (seg_ids,))}
-            events = self._rows("""
+            events = self._rows(f"""
                 SELECT event_id, title, icon, locality, description, first_seen, last_seen, valid_from, valid_to
-                FROM road_event WHERE last_seen >= %(since)s ORDER BY first_seen DESC""", params)
-            return _traffic_stats(days, unit, since, now, gaps, rows, meta, events, stops)
-        return self._cached(("traffic", days), compute)
+                FROM road_event WHERE last_seen >= %(since)s AND first_seen < {UNTIL}
+                ORDER BY first_seen DESC""", params)
+            return _traffic_stats(period, gaps, rows, meta, events, _stop_grid(stops))
+        return self._cached(("traffic", period), compute)
+
+    def traffic_segments(self, stops: list[tuple[str, float, float]]) -> dict:
+        """Every road segment with traffic data: [id, road, km, nearest stop, length m, geometry], and the
+        first and last time the traffic job ran (the times traffic_at can show)."""
+        def compute():
+            grid = _stop_grid(stops)
+            rows = self._rows("""
+                SELECT segment_id, road_number, chainage_from, length_m, geometry
+                FROM traffic_segment WHERE geometry IS NOT NULL ORDER BY segment_id""")
+            first, last = self._rows("""
+                SELECT min(started_at), max(started_at) FROM collector_run WHERE job = 'traffic' AND ok""")[0]
+            return {
+                "segments": [[sid, road, _num(chainage / 1000) if road and chainage is not None else None,
+                              _nearest_stop(_midpoint(geometry), grid), length,
+                              [[[round(lat, 5), round(lon, 5)] for lat, lon in part] for part in geometry]]
+                             for sid, road, chainage, length, geometry in rows],
+                "first": _iso(first), "last": _iso(last),
+            }
+        return self._cached("traffic_segments", compute)
+
+    def traffic_at(self, t: datetime) -> dict:
+        """Traffic on every segment at the moment ``t`` (UTC), and the road events published then.
+
+        A segment's traffic is its last row before ``t``, from the stretch of the collector's runs that
+        ``t`` falls in: a row from before a pause may be stale (the segment may have left the feed
+        during the pause, unrecorded). ``covered`` is false when the collector did not run at ``t``."""
+        def compute():
+            params = {"t": t, "gap": TRAFFIC_GAP}
+            # The runs around t, and the first run of the stretch without pauses that t falls in.
+            prev, nxt, start, now = self._rows("""
+                SELECT (SELECT max(started_at) FROM collector_run
+                        WHERE job = 'traffic' AND ok AND started_at <= %(t)s),
+                       (SELECT min(started_at) FROM collector_run
+                        WHERE job = 'traffic' AND ok AND started_at > %(t)s),
+                       (SELECT max(started_at) FROM (
+                            SELECT started_at, lag(started_at) OVER (ORDER BY started_at) AS before
+                            FROM collector_run WHERE job = 'traffic' AND ok AND started_at <= %(t)s) r
+                        WHERE before IS NULL OR started_at - before > %(gap)s),
+                       now()""", params)[0]
+            covered = prev is not None and t <= now and (nxt or now) - prev <= TRAFFIC_GAP
+            segs, events = {}, []
+            if covered:
+                # The source stamps a row with its own measurement time, a little before the run.
+                params["from"] = start - timedelta(minutes=5)
+                for sid, level, speed, free_flow, delay in self._rows("""
+                        SELECT s.segment_id, x.level, x.speed, x.free_flow, x.delay_s FROM traffic_segment s
+                        CROSS JOIN LATERAL (
+                            SELECT level, speed, free_flow, delay_s FROM traffic_sample
+                            WHERE segment_id = s.segment_id AND observed_at <= %(t)s AND observed_at >= %(from)s
+                            ORDER BY observed_at DESC LIMIT 1) x
+                        WHERE x.level IS NOT NULL""", params):
+                    segs[sid] = [level, speed, free_flow, delay]
+                for title, icon, locality, lat, lon in self._rows("""
+                        SELECT title, icon, locality, lat, lon FROM road_event
+                        WHERE first_seen <= %(t)s AND last_seen >= %(t)s - %(gap)s AND lat IS NOT NULL
+                          AND (valid_from IS NULL OR valid_from <= %(t)s) AND (valid_to IS NULL OR valid_to > %(t)s)
+                        ORDER BY event_id""", params):
+                    events.append([_event_kind(title, icon), title, locality, lat, lon])
+            return {
+                "t": _iso(t), "covered": covered,
+                "segs": segs,   # segment → [level 1–5, speed km/h, free-flow speed km/h, delay s]
+                "events": events,   # [kind, title, place, lat, lon]
+            }
+        return self._cached(("traffic_at", t), compute)
 
     # ------------------------------------------------------------- weather ---
 
-    def weather(self, days: int) -> dict:
-        """Hourly weather of the last ``days`` days, the latest forecast and the Teplárny Brno sites."""
+    def weather(self, period: Period) -> dict:
+        """Hourly weather of the period, the latest forecast (when the period runs up to now) and the
+        Teplárny Brno sites at the end of the period."""
         def compute():
-            past = self._rows("""
+            params = period.params()
+            past = self._rows(f"""
                 SELECT hour_start AT TIME ZONE 'Europe/Prague', temperature, precipitation, snowfall,
                        wind_speed, wind_gusts, cloud_cover, humidity, weather_code
                 FROM weather_hour
-                WHERE hour_start >= now() - make_interval(days => %s) AND hour_start <= now()
-                ORDER BY hour_start""", (days,))
+                WHERE hour_start >= %(since)s AND hour_start < {UNTIL} AND hour_start <= now()
+                ORDER BY hour_start""", params)
             forecast = self._rows("""
                 SELECT hour_start AT TIME ZONE 'Europe/Prague', temperature, precipitation,
                        precipitation_probability, weather_code, issued_at
                 FROM weather_forecast
                 WHERE issued_at = (SELECT max(issued_at) FROM weather_forecast) AND hour_start > now()
-                ORDER BY hour_start LIMIT 48""")
-            sites = self._rows("""
+                  AND %(until)s::timestamptz IS NULL
+                ORDER BY hour_start LIMIT 48""", params)
+            sites = self._rows(f"""
                 SELECT DISTINCT ON (o.station_id) s.name, s.district, o.observed_at, o.temperature
                 FROM temperature_observation o JOIN temperature_station s USING (station_id)
-                WHERE o.observed_at > now() - interval '1 day'
-                ORDER BY o.station_id, o.observed_at DESC""")
+                WHERE o.observed_at > {END} - interval '1 day' AND o.observed_at <= {END}
+                ORDER BY o.station_id, o.observed_at DESC""", params)
             now = next((r for r in reversed(past) if r[1] is not None), None)
             return {
                 # [time, temperature °C, precipitation mm, snowfall cm, wind km/h, gusts km/h, cloud %, humidity %]
@@ -267,37 +386,38 @@ class History:
                 "sites": sorted(({"name": name, "district": district, "time": _iso(t), "temperature": _num(temp)}
                                  for name, district, t, temp in sites), key=lambda s: s["name"] or ""),
             }
-        return self._cached(("weather", days), compute)
+        return self._cached(("weather", period), compute)
 
-    def chmi(self, days: int) -> dict:
-        """Measurements of the ČHMÚ stations in Brno: latest values, hourly series and daily rainfall.
+    def chmi(self, period: Period) -> dict:
+        """Measurements of the ČHMÚ stations in Brno: values at the end of the period, hourly series and daily rainfall.
 
         Hourly series sit at the full hour, like Open-Meteo's: temperature, humidity, dew point,
         pressure and cloud cover as measured then; wind as the mean and the strongest gust of the
         hour before; rain as the hour's total."""
         def compute():
-            params = {"unit": "hour", "days": days}
+            # Daily rainfall of at least the last week of the period: the rain gauges report rarely.
+            params = period.params(rain_since=min(period.since, period.end() - timedelta(days=7)))
             stations = self._rows("SELECT station, name, elevation, lat, lon FROM chmi_station ORDER BY station")
             hourly = self._rows(f"""
                 SELECT date_trunc('hour', observed_at + interval '50 minutes') AT TIME ZONE 'Europe/Prague',
                        station, element,
                        CASE element WHEN 'Fmax' THEN max(value) WHEN 'SRA1H' THEN sum(value) ELSE avg(value) END
                 FROM chmi_value
-                WHERE observed_at >= {SINCE} AND observed_at <= now()
+                WHERE observed_at >= %(since)s AND observed_at < {UNTIL} AND observed_at <= now()
                   AND ((period = '10m' AND element IN ('F', 'Fmax'))
                        OR (period = '10m' AND element IN ('T', 'H') AND extract(minute FROM observed_at) = 0)
                        OR (period = '1h' AND element IN ('Td', 'P_hm', 'N', 'SRA1H')))
                 GROUP BY 1, 2, 3 ORDER BY 1""", params)
             # Daily rainfall is read at 06:00 UTC (7:00 in winter) for the 24 hours before.
-            rain = self._rows("""
+            rain = self._rows(f"""
                 SELECT (observed_at AT TIME ZONE 'Europe/Prague')::date, station, value FROM chmi_value
-                WHERE period = '1d' AND element = 'SRA' AND observed_at >= now() - make_interval(days => %s)
-                ORDER BY 1""", (max(days, 7),))
-            latest = self._rows("""
+                WHERE period = '1d' AND element = 'SRA' AND observed_at >= %(rain_since)s AND observed_at < {UNTIL}
+                ORDER BY 1""", params)
+            latest = self._rows(f"""
                 SELECT DISTINCT ON (station, element) station, element, observed_at, value FROM chmi_value
-                WHERE observed_at > now() - interval '6 hours' AND period IN ('10m', '1h')
+                WHERE observed_at > {END} - interval '6 hours' AND observed_at <= {END} AND period IN ('10m', '1h')
                   AND element IN ('T', 'H', 'F', 'Fmax', 'Td', 'P_hm', 'N', 'VV')
-                ORDER BY station, element, observed_at DESC""")
+                ORDER BY station, element, observed_at DESC""", params)
             buckets = sorted({_local(b) for b, *_ in hourly})
             index = {b: i for i, b in enumerate(buckets)}
             series = {}
@@ -322,28 +442,29 @@ class History:
                 "rain": rain_series,   # station → daily rainfall, mm
                 "now": now,            # station → {element: latest value, "time": newest}
             }
-        return self._cached(("chmi", days), compute)
+        return self._cached(("chmi", period), compute)
 
     # ------------------------------------------------------------- parking ---
 
-    def parking(self, days: int, lot: str | None) -> dict:
-        """Car parks now, and free spaces over time of one car park (or all together)."""
+    def parking(self, period: Period, lot: str | None) -> dict:
+        """Car parks at the end of the period, and free spaces over time of one car park (or all together)."""
         def compute():
-            unit = RANGES[days]
-            latest = self._rows("""
+            unit = period.unit
+            params = period.params(lot=lot)
+            latest = self._rows(f"""
                 SELECT DISTINCT ON (lot) lot, observed_at, coalesce(capacity, capacity_public), free
-                FROM parking_observation WHERE observed_at > now() - interval '2 days'
-                ORDER BY lot, observed_at DESC""")
+                FROM parking_observation WHERE observed_at > {END} - interval '2 days' AND observed_at <= {END}
+                ORDER BY lot, observed_at DESC""", params)
             # Average per car park and bucket first, so a car park that reports more often weighs no more.
             series = self._rows(f"""
                 SELECT bucket, sum(free), sum(capacity) FROM (
                     SELECT date_trunc(%(unit)s, observed_at AT TIME ZONE 'Europe/Prague') AS bucket, lot,
                            avg(free) AS free, avg(coalesce(capacity, capacity_public)) AS capacity
                     FROM parking_observation
-                    WHERE observed_at >= {SINCE} AND free IS NOT NULL
+                    WHERE observed_at >= %(since)s AND observed_at < {UNTIL} AND free IS NOT NULL
                       AND (%(lot)s::text IS NULL OR lot = %(lot)s)
                     GROUP BY 1, 2) per_lot
-                GROUP BY bucket ORDER BY bucket""", {"unit": unit, "days": days, "lot": lot})
+                GROUP BY bucket ORDER BY bucket""", params)
             return {
                 "unit": unit,
                 "lots": sorted(({"lot": name, "time": _iso(t), "capacity": cap, "free": free}
@@ -351,21 +472,21 @@ class History:
                 # [bucket, free spaces, capacity]
                 "series": [[_local(b), _num(free, 0), _num(cap, 0)] for b, free, cap in series],
             }
-        return self._cached(("parking", days, lot), compute)
+        return self._cached(("parking", period, lot), compute)
 
     # ----------------------------------------------------------- the city ---
 
-    def counts(self, days: int) -> dict:
+    def counts(self, period: Period) -> dict:
         """Cyclists and pedestrians at the counting cameras over time, and the busiest places.
 
         The live and history layers count the same cameras under different ids; only the one
         with more data in the period is used, so nobody is counted twice."""
         def compute():
-            unit = RANGES[days]
-            params = {"unit": unit, "days": days}
+            unit = period.unit
+            params = period.params()
             best = self._rows(f"""
                 SELECT source, count(*) FROM bike_count
-                WHERE hour_start >= {SINCE}
+                WHERE hour_start >= %(since)s AND hour_start < {UNTIL}
                 GROUP BY source ORDER BY 2 DESC LIMIT 1""", params)
             if not best:
                 return {"unit": unit, "source": None, "series": [], "places": []}
@@ -373,12 +494,12 @@ class History:
             series = self._rows(f"""
                 SELECT date_trunc(%(unit)s, hour_start AT TIME ZONE 'Europe/Prague'), sum(cyclists), sum(pedestrians)
                 FROM bike_count
-                WHERE source = %(source)s AND hour_start >= {SINCE}
+                WHERE source = %(source)s AND hour_start >= %(since)s AND hour_start < {UNTIL}
                 GROUP BY 1 ORDER BY 1""", params)
             places = self._rows(f"""
                 SELECT coalesce(s.name, c.station), sum(c.cyclists), sum(c.pedestrians)
                 FROM bike_count c LEFT JOIN bike_station s USING (source, station)
-                WHERE c.source = %(source)s AND c.hour_start >= {SINCE}
+                WHERE c.source = %(source)s AND c.hour_start >= %(since)s AND c.hour_start < {UNTIL}
                 GROUP BY 1 ORDER BY coalesce(sum(c.cyclists), 0) + coalesce(sum(c.pedestrians), 0) DESC
                 LIMIT 10""", params)
             return {
@@ -387,7 +508,7 @@ class History:
                 "series": [[_local(b), cyc, ped] for b, cyc, ped in series],
                 "places": [{"name": name, "cyclists": cyc, "pedestrians": ped} for name, cyc, ped in places],
             }
-        return self._cached(("counts", days), compute)
+        return self._cached(("counts", period), compute)
 
     def city(self) -> dict:
         """Swimming pools and ice rinks now, water outages and today's cultural events."""
@@ -440,10 +561,13 @@ def _event_kind(title: str | None, icon: str | None) -> str:
     return "closure"
 
 
-def _traffic_stats(days, unit, since, now, gaps, rows, meta, events, stops) -> dict:
-    """The answer of History.traffic from its rows (see there); times are UTC datetimes."""
+def _traffic_stats(period, gaps, rows, meta, events, stops) -> dict:
+    """The answer of History.traffic from its rows (see there); times are UTC datetimes.
+    ``stops`` is a _stop_grid."""
+    unit, since, now = period.unit, period.since, period.end()   # "now" is the end of the period
     gap_starts = [g[0] for g in gaps]
-    stale = bool(gaps) and gaps[-1][2]   # the collector has not run for a while: nothing is known about now
+    # Nothing is known about now when the collector has not run for a while; a past period has no now.
+    stale = not period.live or (bool(gaps) and gaps[-1][2])
 
     # Seconds with data in every hour of the period. Hours start on whole UTC hours, which are whole
     # Prague hours too, so the period start (a whole Prague hour) is one of them.
@@ -518,29 +642,33 @@ def _traffic_stats(days, unit, since, now, gaps, rows, meta, events, stops) -> d
     current = [s for s in segments if s["now"]]
     longest = sorted(episodes, key=lambda e: e[1] - e[2])[:10]
 
-    latest = max((e[6] for e in events), default=None)
+    # Events published at the end of the period (now: in the latest feed the collector read).
+    latest = min(max((e[6] for e in events), default=now), now) - TRAFFIC_GAP
     ev_now = {"closure": 0, "works": 0, "incident": 0, "accident": 0}
     incidents = []
     for eid, title, icon, locality, description, first, last, vf, vt in events:
         kind = _event_kind(title, icon)
-        if last >= latest - TRAFFIC_GAP and (vf is None or vf <= now) and (vt is None or vt > now):
+        if first <= now and last >= latest and (vf is None or vf <= now) and (vt is None or vt > now):
             ev_now[kind] += 1
-        if kind in ("accident", "incident") and first >= since:
+        if kind in ("accident", "incident") and since <= first < now:
             incidents.append({"kind": kind, "title": title, "place": locality, "text": description,
-                              "from": _iso(first), "to": _iso(last), "current": last >= latest - TRAFFIC_GAP})
+                              "from": _iso(first), "to": _iso(last),
+                              "current": period.live and last >= latest})
 
     return {
         "unit": unit,
         # [bucket, average jammed km on level 4, on level 5]
         "series": [[_local(b), _num(k4 / c, 2), _num(k5 / c, 2)] if c >= 60 else [_local(b), None, None]
                    for b, (k4, k5, c) in sorted(buckets.items())],
-        # average jammed km by hour of day (Prague), on workdays (Mon–Fri) and at weekends; None for one day
+        # average jammed km by hour of day (Prague), on workdays (Mon–Fri) and at weekends; None for a day or less
         "profile": {"work": [_num(a / c, 2) if c else None for a, c in profile[False]],
-                    "weekend": [_num(a / c, 2) if c else None for a, c in profile[True]]} if days > 1 else None,
+                    "weekend": [_num(a / c, 2) if c else None for a, c in profile[True]]}
+                   if now - since > timedelta(days=1.5) else None,
         "avg_km": _num(total / covered, 2) if covered else None,
         "km_hours": _num(total / 3600, 1),
         "peak": [_local(peak[0].astimezone(PRAGUE).replace(tzinfo=None)), _num(peak[1], 1)] if peak else None,
         "coverage": round(covered / sum((min(h + HOUR, now) - h).total_seconds() for h, _ in hours), 3) if hours else None,
+        # jams now; None for a past period or when the collector is not running
         "now": None if stale else {"segments": len(current), "km": _num(sum(s["length"] or 0 for s in current) / 1000, 1),
                                    "max_delay": max(delay_now.values(), default=None)},
         "segments": segments,   # every segment jammed in the period, longest jammed first

@@ -28,6 +28,12 @@
   .seg button + button { border-left:1px solid var(--line); }
   .seg button[aria-pressed="true"] { background:var(--accent); color:#fff; }
 
+  .range { display:flex; align-items:center; gap:6px; font-size:14px; }
+  .range[hidden] { display:none; }
+  .range input, .moment-ctl input[type=date] { font:inherit; font-size:14px; padding:4px 6px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); }
+  .btn { border:1px solid var(--line); background:var(--bg); border-radius:6px; padding:4px 12px; cursor:pointer; font-size:14px; }
+  .btn[aria-pressed="true"] { background:var(--accent); color:#fff; }
+
   .hero { padding:32px 0 8px; }
   .hero h1 { font-size:30px; line-height:1.2; margin:0 0 8px; }
   .hero p { color:var(--muted); margin:0; max-width:720px; }
@@ -94,6 +100,9 @@
   /* traffic map */
   .tmap { height:440px; border:1px solid var(--line); border-radius:10px; margin:6px 0 0; z-index:0; }
   .tmap-legend i { height:5px; }
+  .moment-ctl { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 4px; }
+  .moment-ctl input[type=range] { flex:1; min-width:160px; accent-color:var(--accent); }
+  .moment-ctl b { font-variant-numeric:tabular-nums; min-width:120px; }
   tr[data-seg] { cursor:pointer; }
   tr[data-seg]:hover td { background:var(--soft); }
 
@@ -123,7 +132,10 @@
     <nav><a href="/">Mapa sítě</a><a href="/zive">Živá mapa</a><a href="/o-aplikaci">O aplikaci</a></nav>
     {% if enabled %}
     <div class="seg" role="group" aria-label="Období">
-      <button data-days="1">24 hodin</button><button data-days="7">7 dní</button><button data-days="30">30 dní</button>
+      <button data-days="1">24 hodin</button><button data-days="7">7 dní</button><button data-days="30">30 dní</button><button data-days="0">Vlastní</button>
+    </div>
+    <div class="range" id="range" hidden>
+      <input type="date" id="rFrom" aria-label="Od"> – <input type="date" id="rTo" aria-label="Do">
     </div>
     {% endif %}
   </div>
@@ -229,6 +241,12 @@ function bucketLabel(s, unit) {
 }
 const PRAGUE = new Intl.DateTimeFormat("cs-CZ", {timeZone: "Europe/Prague", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit"});
 const PRAGUE_DAY = new Intl.DateTimeFormat("cs-CZ", {timeZone: "Europe/Prague", day: "numeric", month: "numeric", year: "numeric"});
+// A time as Prague wall-clock "YYYY-MM-DDTHH:MM" (the Swedish format is ISO-like).
+const PRAGUE_ISO = new Intl.DateTimeFormat("sv-SE", {timeZone: "Europe/Prague", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"});
+const localIso = d => PRAGUE_ISO.format(d).replace(" ", "T");
+const today = () => localIso(new Date()).slice(0, 10);
+// A wall-clock "YYYY-MM-DDTHH:MM" moved by ``min`` minutes.
+const addMinutes = (s, min) => new Date(tx(s) + min * 60e3).toISOString().slice(0, 16);
 // An ISO time in Prague time, e.g. "14. 10. 08:15"; "–" when missing.
 const when = iso => iso ? PRAGUE.format(new Date(iso)) : "–";
 // How long ago an ISO time was, e.g. "před 5 min".
@@ -275,7 +293,8 @@ function timeTicks(t0, t1, width) {
 /* A time chart with one value axis: lines (``type: "line"``, optionally dashed) and bars.
    opts: {x: [bucket strings], unit: "hour" | "day", series: [{name, color, values, type, dash}],
           format: v => text, zero: include 0 on the axis, small: lower chart,
-          xFormat: bucket => text for the tooltip and the table (default: the bucket's date and time)}. */
+          xFormat: bucket => text for the tooltip and the table (default: the bucket's date and time),
+          onPick: bucket => …, called when the chart is clicked}. */
 function timeChart(el, opts) {
   const series = opts.series.filter(s => s.values.some(v => v != null));
   if (!opts.x.length || !series.length) { el.innerHTML = `<p class="empty">Za toto období zatím nejsou data.</p>`; return; }
@@ -341,12 +360,17 @@ function timeChart(el, opts) {
     h += `<g class="dots"></g>`;
     svg.innerHTML = h;
 
-    // Crosshair and tooltip at the nearest bucket.
+    // Crosshair and tooltip at the nearest bucket; a click picks it (opts.onPick).
     const line = svg.querySelector(".hover"), dots = svg.querySelector(".dots");
-    svg.onpointermove = e => {
-      const r = svg.getBoundingClientRect(), px = e.clientX - r.left;
+    const nearest = e => {
+      const px = e.clientX - svg.getBoundingClientRect().left;
       let best = 0;
       xs.forEach((t, i) => { if (Math.abs(X(t + half) - px) < Math.abs(X(xs[best] + half) - px)) best = i; });
+      return best;
+    };
+    if (opts.onPick) { svg.style.cursor = "pointer"; svg.onclick = e => opts.onPick(opts.x[nearest(e)]); }
+    svg.onpointermove = e => {
+      const best = nearest(e);
       const present = series.filter(s => s.values[best] != null);
       if (!present.length) { svg.onpointerleave(); return; }
       const x = X(xs[best] + half);
@@ -376,6 +400,12 @@ const meter = (share, color = "var(--blue)") => share == null ? "" :
 // ------------------------------------------------------------- sections ---
 
 let days = 7;
+let range = null;           // chosen dates {from, to} ("YYYY-MM-DD"), instead of the last ``days`` days
+// The period as query parameters.
+const periodQuery = () => range ? `from=${range.from}&to=${range.to}` : `days=${days}`;
+// Whether the period runs up to now, so "now" belongs to it.
+const isLive = () => !range || range.to >= today();
+const nowWord = () => isLive() ? "teď" : "na konci období";
 let lines = {};             // KORDIS LineID → {short, long, type, color, text}
 let lot = "";               // selected car park ("" = all)
 
@@ -532,8 +562,10 @@ function weatherModel(body, d) {
 
 // ----------------------------------------------------------- car traffic ---
 
-// Shades of the live map's traffic colours, for the share of time a segment was jammed.
-const JAM_COLORS = ["#b3a9ee", "#8d7fe4", "#4a3aa7", "#2f2470"];
+// Traffic levels 1–5 as on the live map; their darker shades also grade the share of time a segment was jammed.
+const LEVEL_COLORS = ["#c9c8c1", "#b3a9ee", "#8d7fe4", "#4a3aa7", "#2f2470"];
+const LEVEL_LABEL = ["plynulý", "mírně zpomalený", "zpomalený", "hustý, kolony", "stojí"];
+const JAM_COLORS = LEVEL_COLORS.slice(1);
 const JAM_SHARES = [0.02, 0.05, 0.1];   // class limits: under 2 %, 2–5 %, 5–10 %, 10 % and more
 const jamClass = share => JAM_SHARES.filter(s => share >= s).length;
 // A road segment in words: the source names segments only by codes, so by road number and km, and the nearest stop.
@@ -579,9 +611,106 @@ async function trafficMapDraw(el, segments) {
   return layers;
 }
 
+// ------------------------------------------------------ traffic at a moment ---
+
+let moment = null;          // the moment on the traffic map, Prague "YYYY-MM-DDTHH:MM" (kept in the address as ?cas=)
+let momentPinned = false;   // the moment came from the address: keep it on the first load, even outside the period
+let tseg = null;            // every segment {segments: [[id, road, km, stop, length, geometry]], first, last}, loaded once
+let momentMap = null, momentLayer = null, playing = false, momentReq = 0;
+const hhmm = m => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+
+// The map of the traffic at a moment, with its date, time slider and play button.
+async function momentSetup(m) {
+  playing = false;
+  moment = m;
+  const el = $("#momentMap");
+  try {
+    await loadLeaflet();
+    tseg ||= await get("/api/stats/traffic/segments");
+  } catch (e) { el.outerHTML = `<p class="empty">Mapu se nepodařilo načíst.</p>`; return; }
+  if (!el.isConnected) return;   // the section was redrawn meanwhile
+  momentMap?.remove();
+  momentMap = L.map(el, {scrollWheelZoom: false, preferCanvas: true});
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, NDIC'}).addTo(momentMap);
+  momentLayer = L.layerGroup().addTo(momentMap);
+  const points = tseg.segments.flatMap(s => s[5].flat());
+  points.length ? momentMap.fitBounds(points, {padding: [10, 10]}) : momentMap.setView([49.195, 16.608], 12);
+
+  const date = $("#mDate"), time = $("#mTime");
+  if (tseg.first) date.min = localIso(new Date(tseg.first)).slice(0, 10);
+  date.max = today();
+  date.onchange = () => date.value && showMoment(date.value + moment.slice(10));
+  let timer;
+  time.oninput = () => {   // the label follows the slider at once, the map when it stops
+    $("#mLabel").textContent = hhmm(+time.value);
+    clearTimeout(timer);
+    timer = setTimeout(() => showMoment(`${moment.slice(0, 11)}${hhmm(+time.value)}`), 200);
+  };
+  $("#mPlay").onclick = play;
+  showMoment(moment);
+}
+
+// Show the traffic at the moment m; ``scroll`` brings the map into view.
+async function showMoment(m, scroll) {
+  if (!momentLayer) return;
+  moment = m;
+  setParam("cas", m);
+  $("#mDate").value = m.slice(0, 10);
+  $("#mTime").value = +m.slice(11, 13) * 60 + +m.slice(14, 16);
+  $("#mLabel").textContent = bucketLabel(m, "hour");
+  if (scroll) $("#momentMap").scrollIntoView({behavior: "smooth", block: "center"});
+  const req = ++momentReq;
+  let r;
+  try {
+    r = await get(`/api/stats/traffic/at?t=${m}`);
+  } catch (e) {
+    if (req === momentReq) $("#mSummary").textContent = "Data se teď nepodařilo načíst.";
+    return;
+  }
+  if (req !== momentReq || !momentLayer) return;   // a newer moment was asked for meanwhile
+  momentLayer.clearLayers();
+  if (!r.covered) { $("#mSummary").textContent = "V tuto dobu se provoz aut nezaznamenával."; return; }
+  let jam = 0, jamN = 0, stopped = 0;
+  // Free-flowing roads first, so the slow ones are drawn on top.
+  const shown = tseg.segments.filter(s => r.segs[s[0]]).sort((a, b) => r.segs[a[0]][0] - r.segs[b[0]][0]);
+  for (const [id, road, km, stop, length, geometry] of shown) {
+    const [lv, speed, free, delay] = r.segs[id];
+    if (lv >= 4) { jam += length || 0; jamN++; }
+    if (lv >= 5) stopped += length || 0;
+    L.polyline(geometry, {color: LEVEL_COLORS[lv - 1], weight: lv === 1 ? 2.5 : 1 + lv, opacity: lv === 1 ? 0.85 : 0.9})
+      .bindTooltip(`<b>${esc(segName({id, road, km, stop}))}</b><br>${LEVEL_LABEL[lv - 1]}` +
+                   (speed != null ? `, ${speed} km/h${free ? ` (obvykle ${free} km/h)` : ""}` : "") +
+                   (delay ? `<br>zdržení ${minutes(delay)}` : ""), {sticky: true})
+      .addTo(momentLayer);
+  }
+  for (const [kind, title, place, lat, lon] of r.events) {
+    L.circleMarker([lat, lon], {radius: 5, color: "#fff", weight: 1.5, fillOpacity: 1,
+                                fillColor: css(kind === "accident" || kind === "incident" ? "--bad" : "--gray")})
+      .bindTooltip(`<b>${esc(title || "Událost")}</b>${place ? `<br>${esc(place)}` : ""}`).addTo(momentLayer);
+  }
+  $("#mSummary").textContent = `V koloně ${num(jam / 1000, 1)} km (${jamN} úseků), z toho stojí ${num(stopped / 1000, 1)} km · ` +
+    `${shown.length} úseků s měřením · ${r.events.length} uzavírek a událostí`;
+}
+
+// Play the traffic forward by 5 minutes, about two steps a second, up to now.
+async function play() {
+  playing = !playing;
+  const button = state => { const b = $("#mPlay"); if (b) { b.setAttribute("aria-pressed", String(state)); b.textContent = state ? "❚❚" : "▶"; } };
+  button(playing);
+  while (playing) {
+    const next = addMinutes(moment, 5), t0 = Date.now();
+    if (next > localIso(new Date())) break;
+    await showMoment(next);
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, 500 - (Date.now() - t0))));
+  }
+  playing = false;
+  button(false);
+}
+
 const SECTIONS = {
   async delays(body) {
-    const d = await get(`/api/stats/delays?days=${days}`);
+    const d = await get(`/api/stats/delays?${periodQuery()}`);
     if (!d.series.length) { body.innerHTML = `<p class="empty">Za toto období zatím nejsou žádné záznamy o zpoždění.</p>`; return; }
     let sum = 0, n = 0, late = 0;
     for (const [, modes] of d.series) for (const [s, c, l] of Object.values(modes)) { sum += s; n += c; late += l; }
@@ -628,7 +757,7 @@ const SECTIONS = {
   },
 
   async traffic(body) {
-    const d = await get(`/api/stats/traffic?days=${days}`);
+    const d = await get(`/api/stats/traffic?${periodQuery()}`);
     if (!d.series.some(r => r[1] != null)) { body.innerHTML = `<p class="empty">Za toto období zatím nejsou data o provozu aut.</p>`; return; }
     const seg = new Map(d.segments.map(s => [s.id, s]));
     const ev = d.events, top = d.segments.slice(0, 15), longest = d.longest[0];
@@ -637,17 +766,33 @@ const SECTIONS = {
       ${i.text ? `<p>${esc(i.text.length > 240 ? i.text.slice(0, 240) + "…" : i.text)}</p>` : ""}</div>`;
     body.innerHTML = `
       <div class="tiles">
-        <div class="tile"><b>${d.now ? `${num(d.now.km, 1)} km` : "–"}</b><span>${d.now ? `v kolonách teď (${d.now.segments} úseků)` : "teď neznámo, sběr dat neběží"}</span></div>
+        ${d.now ? `<div class="tile"><b>${num(d.now.km, 1)} km</b><span>v kolonách teď (${d.now.segments} úseků)</span></div>`
+          : isLive() ? `<div class="tile"><b>–</b><span>teď neznámo, sběr dat neběží</span></div>`
+          : `<div class="tile"><b>${num(d.km_hours, 0)}</b><span>kilometrohodin v kolonách</span></div>`}
         <div class="tile"><b>${num(d.avg_km, 1)} km</b><span>v kolonách průměrně</span></div>
         <div class="tile"><b>${d.peak ? `${num(d.peak[1], 1)} km` : "–"}</b><span>nejvíc${d.peak ? `: ${bucketLabel(d.peak[0], "hour")}` : ""}</span></div>
         <div class="tile"><b>${d.segments.length}</b><span>úseků aspoň chvíli v koloně</span></div>
         <div class="tile"><b>${longest ? duration(longest.minutes) : "–"}</b><span>nejdelší kolona${longest ? `: ${esc(segName(seg.get(longest.id)))}` : ""}</span></div>
         <div class="tile"><b>${ev.accidents}</b><span>nehod za období${ev.incident_count > ev.accidents ? `, další události ${ev.incident_count - ev.accidents}` : ""}</span></div>
-        <div class="tile"><b>${ev.now.closure}</b><span>uzavírek a omezení teď</span></div>
-        <div class="tile"><b>${ev.now.works}</b><span>prací na silnici teď</span></div>
+        <div class="tile"><b>${ev.now.closure}</b><span>uzavírek a omezení ${nowWord()}</span></div>
+        <div class="tile"><b>${ev.now.works}</b><span>prací na silnici ${nowWord()}</span></div>
       </div>
       <h3>Kilometry silnic v koloně</h3><div id="chJam"></div>
       ${d.profile ? `<h3>Typický den: kolony podle hodiny</h3><div id="chJamDay"></div>` : ""}
+      <h3>Provoz ve zvoleném okamžiku</h3>
+      <div class="moment-ctl">
+        <input type="date" id="mDate" aria-label="Den">
+        <button class="btn" id="mPlay" aria-pressed="false" title="Přehrát po 5 minutách">▶</button>
+        <input type="range" id="mTime" min="0" max="1435" step="5" aria-label="Čas">
+        <b id="mLabel"></b>
+      </div>
+      <p class="sub" id="mSummary"></p>
+      <div class="legend tmap-legend">${LEVEL_LABEL.map((t, k) => `<span><i style="background:${LEVEL_COLORS[k]}"></i>${t}</span>`).join("")}
+        <span><i style="background:var(--bad);width:8px;height:8px;border-radius:50%"></i>nehoda, událost</span>
+        <span><i style="background:var(--gray);width:8px;height:8px;border-radius:50%"></i>uzavírka, práce</span></div>
+      <div class="tmap" id="momentMap" role="img" aria-label="Mapa provozu ve zvoleném okamžiku"></div>
+      <p class="note">Kliknutím do grafu kilometrů nebo na řádek nejdelších kolon se mapa přesune na danou dobu.
+        Šedé silnice mají plynulý provoz, silnice bez barvy v tu dobu žádná auta nezměřila.</p>
       <h3>Kde se tvoří kolony</h3>
       <div class="legend tmap-legend">${["pod 2 %", "2–5 %", "5–10 %", "10 % a víc"].map((t, k) =>
         `<span><i style="background:${JAM_COLORS[k]}"></i>${t} času v koloně</span>`).join("")}</div>
@@ -662,7 +807,7 @@ const SECTIONS = {
       <h3>Nejdelší kolony</h3>
       <div class="tbl"><table>
         <tr><th>Úsek</th><th>Kdy</th><th class="n">Trvání</th><th class="n">Největší zdržení</th></tr>
-        ${d.longest.map(j => `<tr data-seg="${j.id}"><td>${esc(segName(seg.get(j.id)))}</td><td>${j.ongoing ? `od ${when(j.from)}, trvá` : period(j.from, j.to)}</td>
+        ${d.longest.map(j => `<tr data-at="${localIso(new Date((Date.parse(j.from) + Date.parse(j.to)) / 2))}"><td>${esc(segName(seg.get(j.id)))}</td><td>${j.ongoing ? `od ${when(j.from)}, trvá` : period(j.from, j.to)}</td>
           <td class="n">${duration(j.minutes)}</td><td class="n">${minutes(j.max_delay)}${j.level >= 5 ? " · stojí" : ""}</td></tr>`).join("")}
       </table></div>
       <h3>Nehody a mimořádné události</h3>
@@ -675,7 +820,9 @@ const SECTIONS = {
         ${d.coverage != null && d.coverage < 0.99 ? `Sběr dat běžel ${pct(d.coverage)} období; doba bez dat se nepočítá.` : ""}
         Úseky zdroj označuje jen kódy, proto je popisujeme číslem silnice a nejbližší zastávkou IDS JMK.</p>`;
 
-    timeChart($("#chJam"), {x: d.series.map(r => r[0]), unit: d.unit, zero: true, label: "Kilometry silnic v koloně",
+    // A bucket of the chart picked: its middle hour, or for whole days the same time of day.
+    const pick = b => showMoment(d.unit === "day" ? b.slice(0, 11) + (moment || "T07:30").slice(11) : addMinutes(b, 30), true);
+    timeChart($("#chJam"), {x: d.series.map(r => r[0]), unit: d.unit, zero: true, label: "Kilometry silnic v koloně", onPick: pick,
       format: v => `${num(v, 1)} km`, series: [
         {name: "V koloně", color: JAM_COLORS[1], values: d.series.map(r => r[1] == null ? null : r[1] + r[2])},
         {name: "Z toho stojí", color: JAM_COLORS[3], dash: true, values: d.series.map(r => r[2])}]});
@@ -686,7 +833,14 @@ const SECTIONS = {
           {name: "Pracovní dny", color: css("--blue"), values: d.profile.work},
           {name: "Víkendy", color: css("--orange"), values: d.profile.weekend}]});
     }
+    // The moment shown: from the address, else the worst hour of the period (its middle).
+    body.querySelectorAll("tr[data-at]").forEach(tr => tr.onclick = () => showMoment(tr.dataset.at, true));
     const mapEl = $("#trafficMap");
+    const last = d.series.length ? addMinutes(d.series.at(-1)[0], d.unit === "day" ? 1440 : 60) : "";
+    const inPeriod = m => m && d.series.length && m >= d.series[0][0] && m < last;
+    momentSetup(inPeriod(moment) || momentPinned ? moment
+                : d.peak ? addMinutes(d.peak[0], 30) : localIso(new Date()).slice(0, 15) + "0");
+    momentPinned = false;
     const layers = await trafficMapDraw(mapEl, d.segments);
     // A row of the tables shows its segment on the map.
     if (layers) body.querySelectorAll("tr[data-seg]").forEach(tr => tr.onclick = () => {
@@ -699,19 +853,19 @@ const SECTIONS = {
   },
 
   async weather(body) {
-    const [d, c] = await Promise.all([get(`/api/stats/weather?days=${days}`),
-                                      get(`/api/stats/chmi?days=${days}`).catch(() => null)]);
+    const [d, c] = await Promise.all([get(`/api/stats/weather?${periodQuery()}`),
+                                      get(`/api/stats/chmi?${periodQuery()}`).catch(() => null)]);
     if (c && c.hours.length) weatherStations(body, d, c);
     else weatherModel(body, d);
   },
 
   async parking(body) {
-    const d = await get(`/api/stats/parking?days=${days}&lot=${encodeURIComponent(lot)}`);
+    const d = await get(`/api/stats/parking?${periodQuery()}&lot=${encodeURIComponent(lot)}`);
     if (!d.lots.length && !d.series.length) { body.innerHTML = `<p class="empty">Zatím žádná data o parkovištích.</p>`; return; }
     const free = d.lots.reduce((a, r) => a + (r.free || 0), 0), cap = d.lots.reduce((a, r) => a + (r.capacity || 0), 0);
     body.innerHTML = `
       <div class="tiles">
-        <div class="tile"><b>${NUM.format(free)}</b><span>volných míst teď</span></div>
+        <div class="tile"><b>${NUM.format(free)}</b><span>volných míst ${nowWord()}</span></div>
         <div class="tile"><b>${cap ? pct(1 - free / cap) : "–"}</b><span>obsazeno</span></div>
         <div class="tile"><b>${d.lots.length}</b><span>parkovišť</span></div>
         <div class="tile"><b>${d.lots.filter(r => r.capacity && r.free != null && r.free / r.capacity < 0.05).length}</b><span>skoro plných (pod 5 % volných)</span></div>
@@ -720,7 +874,7 @@ const SECTIONS = {
       <p><select id="lotSel" aria-label="Parkoviště"><option value="">Všechna parkoviště</option>${d.lots.map(r =>
         `<option${r.lot === lot ? " selected" : ""}>${esc(r.lot)}</option>`).join("")}</select></p>
       <div id="chPark"></div>
-      <h3>Parkoviště teď</h3>
+      <h3>Parkoviště ${nowWord()}</h3>
       <div class="tbl"><table><tr><th>Parkoviště</th><th class="n">Volno</th><th class="n">Kapacita</th><th class="n">Obsazeno</th><th class="n">Aktualizace</th></tr>
         ${d.lots.map(r => {
           const occ = r.capacity && r.free != null ? 1 - r.free / r.capacity : null;
@@ -735,7 +889,7 @@ const SECTIONS = {
   },
 
   async counts(body) {
-    const d = await get(`/api/stats/counts?days=${days}`);
+    const d = await get(`/api/stats/counts?${periodQuery()}`);
     if (!d.series.length) { body.innerHTML = `<p class="empty">Za toto období zatím nejsou data ze sčítačů.</p>`; return; }
     const cyc = d.series.reduce((a, r) => a + (r[1] || 0), 0), ped = d.series.reduce((a, r) => a + (r[2] || 0), 0);
     body.innerHTML = `
@@ -808,26 +962,64 @@ function loadAll(onlyPeriod) {
   if (!onlyPeriod) for (const name of ["diversions", "city", "status"]) load(name, SECTIONS[name]);
 }
 
-// Period buttons; the period is kept in the address (?dny=30).
-function setDays(n, push) {
-  days = n;
-  document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.days === n)));
-  if (push) {
-    const url = new URL(location);
-    n === 7 ? url.searchParams.delete("dny") : url.searchParams.set("dny", n);
-    history.replaceState(null, "", url);
-  }
+// Set a value in the address, or remove it (null).
+function setParam(name, value) {
+  const url = new URL(location);
+  value == null ? url.searchParams.delete(name) : url.searchParams.set(name, value);
+  history.replaceState(null, "", url);
 }
+
+// The period: the last 1, 7 or 30 days, or chosen dates (r); kept in the address (?dny=30, ?od=…&do=…).
+const MAX_RANGE_DAYS = 31;
+function setPeriod(n, r) {
+  days = n;
+  range = r;
+  document.querySelectorAll(".seg button").forEach(b =>
+    b.setAttribute("aria-pressed", String(r ? b.dataset.days === "0" : +b.dataset.days === n)));
+  $("#range").hidden = !r;
+  if (r) { $("#rFrom").value = r.from; $("#rTo").value = r.to; }
+  setParam("dny", r || n === 7 ? null : n);
+  setParam("od", r ? r.from : null);
+  setParam("do", r ? r.to : null);
+}
+function reload() { charts.clear(); loadAll(true); }
+const dayShift = (d, n) => addMinutes(`${d}T00:00`, n * 1440).slice(0, 10);
+
 document.querySelectorAll(".seg button").forEach(b => b.onclick = () => {
-  if (+b.dataset.days === days) return;
-  setDays(+b.dataset.days, true);
-  charts.clear();
-  loadAll(true);
+  const n = +b.dataset.days;
+  if (n === 0) {
+    if (range) return;
+    setPeriod(days, {from: dayShift(today(), -6), to: today()});   // a week to start from
+  } else {
+    if (!range && n === days) return;
+    setPeriod(n, null);
+  }
+  reload();
 });
+// Chosen dates: the other end follows, so the period stays valid (from ≤ to, at most MAX_RANGE_DAYS days).
+for (const input of [$("#rFrom"), $("#rTo")]) {
+  input.max = today();
+  input.onchange = () => {
+    let from = $("#rFrom").value, to = $("#rTo").value;
+    if (!from || !to) return;
+    if (input.id === "rFrom") {
+      if (to < from) to = from;
+      if (to > dayShift(from, MAX_RANGE_DAYS - 1)) to = dayShift(from, MAX_RANGE_DAYS - 1);
+    } else {
+      if (from > to) from = to;
+      if (from < dayShift(to, 1 - MAX_RANGE_DAYS)) from = dayShift(to, 1 - MAX_RANGE_DAYS);
+    }
+    setPeriod(days, {from, to});
+    reload();
+  };
+}
 
 (async () => {
-  const fromUrl = +new URLSearchParams(location.search).get("dny");
-  setDays([1, 7, 30].includes(fromUrl) ? fromUrl : 7, false);
+  const q = new URLSearchParams(location.search), isDay = v => /^\d{4}-\d{2}-\d{2}$/.test(v || "");
+  const fromUrl = +q.get("dny");
+  if (isDay(q.get("od")) && isDay(q.get("do")) && q.get("od") <= q.get("do")) setPeriod(7, {from: q.get("od"), to: q.get("do")});
+  else setPeriod([1, 7, 30].includes(fromUrl) ? fromUrl : 7, null);
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(q.get("cas") || "")) { moment = q.get("cas"); momentPinned = true; }
   try { lines = (await get("/api/stats/meta")).lines; } catch (e) { /* lines stay unnamed */ }
   loadAll(false);
 })();

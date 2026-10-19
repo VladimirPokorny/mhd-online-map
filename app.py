@@ -23,7 +23,7 @@ import threading
 import time
 import traceback
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -498,12 +498,24 @@ def _history() -> stats.History:
     return history
 
 
-def _days() -> int:
-    """The ``days`` query parameter: 1, 7 or 30."""
+def _period() -> stats.Period:
+    """The period of a statistic: the dates ``from`` and ``to`` (Prague, both included, at most
+    stats.MAX_RANGE_DAYS days), or the last ``days`` days (1, 7 or 30; default 7)."""
+    first, last = request.args.get("from"), request.args.get("to")
+    if first or last:
+        try:
+            first, last = date.fromisoformat(first or last), date.fromisoformat(last or first)
+        except ValueError:
+            abort(400, "from and to must be dates (YYYY-MM-DD)")
+        if last < first:
+            abort(400, "from must not be after to")
+        if (last - first).days >= stats.MAX_RANGE_DAYS:
+            abort(400, f"at most {stats.MAX_RANGE_DAYS} days")
+        return stats.Period.dates(first, last)
     days = request.args.get("days", default=7, type=int)
     if days not in stats.RANGES:
         abort(400, "days must be 1, 7 or 30")
-    return days
+    return stats.Period.last(days)
 
 
 @app.errorhandler(503)
@@ -548,7 +560,7 @@ def api_stats_status():
 def api_stats_delays():
     """Delays of IDS JMK vehicles over time by mode, and the most delayed lines."""
     modes = {line: r["type"] for line, r in _lines().items()}
-    return _query(stats.History.delays, _days(), modes)
+    return _query(stats.History.delays, _period(), modes)
 
 
 @app.route("/api/stats/diversions")
@@ -557,35 +569,56 @@ def api_stats_diversions():
     return _query(stats.History.diversions)
 
 
+def _stops() -> list[tuple[str, float, float]]:
+    """Stops of the current timetable as (name, lat, lon), to name road segments."""
+    return [(s["name"], s["lat"], s["lon"]) for s in state.network["stops"]]
+
+
 @app.route("/api/stats/traffic")
 def api_stats_traffic():
     """Traffic jams on Brno's roads, the segments jammed longest, and road events."""
-    stops = [(s["name"], s["lat"], s["lon"]) for s in state.network["stops"]]
-    return _query(stats.History.traffic, _days(), stops)
+    return _query(stats.History.traffic, _period(), _stops())
+
+
+@app.route("/api/stats/traffic/segments")
+def api_stats_traffic_segments():
+    """Every road segment with traffic data, named, with its geometry; and the times traffic is stored for."""
+    return _query(stats.History.traffic_segments, _stops())
+
+
+@app.route("/api/stats/traffic/at")
+def api_stats_traffic_at():
+    """Traffic on every segment and the road events at the moment ``t`` (Prague time, YYYY-MM-DDTHH:MM)."""
+    try:
+        t = datetime.fromisoformat(request.args.get("t", ""))
+    except ValueError:
+        abort(400, "t must be a time (YYYY-MM-DDTHH:MM, Prague time)")
+    t = t.replace(second=0, microsecond=0, tzinfo=t.tzinfo or stats.PRAGUE).astimezone(timezone.utc)
+    return _query(stats.History.traffic_at, t)
 
 
 @app.route("/api/stats/weather")
 def api_stats_weather():
     """Hourly weather, the latest forecast and air temperature at the Teplárny Brno sites."""
-    return _query(stats.History.weather, _days())
+    return _query(stats.History.weather, _period())
 
 
 @app.route("/api/stats/chmi")
 def api_stats_chmi():
     """Measurements of the ČHMÚ stations in Brno: latest values, hourly series, daily rainfall."""
-    return _query(stats.History.chmi, _days())
+    return _query(stats.History.chmi, _period())
 
 
 @app.route("/api/stats/parking")
 def api_stats_parking():
     """Car parks now and free spaces over time (``lot`` = one car park, default all)."""
-    return _query(stats.History.parking, _days(), request.args.get("lot") or None)
+    return _query(stats.History.parking, _period(), request.args.get("lot") or None)
 
 
 @app.route("/api/stats/counts")
 def api_stats_counts():
     """Cyclists and pedestrians at the counting cameras."""
-    return _query(stats.History.counts, _days())
+    return _query(stats.History.counts, _period())
 
 
 @app.route("/api/stats/city")
