@@ -32,8 +32,9 @@ def all_jobs() -> list[Job]:
     from .counters import BikeCountsHistory, BikeCountsLive, TsbCounts
     from .kordis import KordisArchive, KordisStream
     from .parking import Parking
+    from .traffic import Traffic
     from .transport import IdsDiversions
     from .venues import Venues
     from .weather import Temperatures, Weather
-    return [Parking(), Venues(), Temperatures(), BikeCountsLive(), Weather(), Chmi(), IdsDiversions(), WaterOutages(),
-            CityEvents(), KordisStream(), KordisArchive(), BikeCountsHistory(), TsbCounts()]
+    return [Parking(), Venues(), Temperatures(), BikeCountsLive(), Weather(), Chmi(), Traffic(), IdsDiversions(),
+            WaterOutages(), CityEvents(), KordisStream(), KordisArchive(), BikeCountsHistory(), TsbCounts()]
